@@ -1,0 +1,4 @@
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$w=New-Object -ComObject WScript.Shell; $lnk=$w.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\WaTerm.lnk'); $lnk.TargetPath=$env:USERPROFILE+'\WaTerm\node_modules\electron\dist\electron.exe'; $lnk.Arguments='\"'+$env:USERPROFILE+'\WaTerm\"'; $lnk.WorkingDirectory=$env:USERPROFILE+'\WaTerm'; $lnk.IconLocation=$env:USERPROFILE+'\WaTerm\node_modules\electron\dist\electron.exe,0'; $lnk.Description='和ターミナル WaTerm'; $lnk.Save(); Write-Host ('shortcut created: '+[Environment]::GetFolderPath('Desktop')+'\WaTerm.lnk')"
+echo done
+timeout /t 4 >nul

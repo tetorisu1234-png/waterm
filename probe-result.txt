@@ -1,0 +1,6 @@
+openssl: 0.0.0
+createDiffieHellman(explicit MODP2): OK match=true pubLen=128
+getDiffieHellman(modp2): FAIL Unknown DH group
+des-ede3-cbc: true aes-128-cbc: true
+cipheriv aes-128-cbc OK
+cipheriv des-ede3-cbc OK

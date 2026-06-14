@@ -1,0 +1,5 @@
+AP READY (patched)
+AP READY (patched)
+prompt: " AP1142N#"
+prompt: " AP1142N#"
+prompt: " AP1142N#"

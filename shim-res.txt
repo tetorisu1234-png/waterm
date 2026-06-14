@@ -1,0 +1,20 @@
+=== run 1 ===
+shim patched=true groups=modp1,modp2,modp5,modp14,modp15,modp16,modp17,modp18
+=== run 2 ===
+shim patched=true groups=modp1,modp2,modp5,modp14,modp15,modp16,modp17,modp18
+READY 192.168.10.4
+=== run 3 ===
+shim patched=true groups=modp1,modp2,modp5,modp14,modp15,modp16,modp17,modp18
+READY 192.168.10.4
+=== run 4 ===
+shim patched=true groups=modp1,modp2,modp5,modp14,modp15,modp16,modp17,modp18
+READY 192.168.10.4
+prompt=" AP1142N#"
+=== run 5 ===
+shim patched=true groups=modp1,modp2,modp5,modp14,modp15,modp16,modp17,modp18
+READY 192.168.10.4
+prompt=" AP1142N#"
+READY 192.168.10.4
+prompt=" AP1142N#"
+prompt=" AP1142N#"
+prompt=" AP1142N#"

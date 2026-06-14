@@ -1,0 +1,79 @@
+{
+  "name": "waterm",
+  "version": "1.1.0",
+  "description": "和ターミナル - 日本語SSH/Telnet/シリアル/RDP/SFTPクライアント",
+  "main": "src/main.js",
+  "author": "WaTerm",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "iconv-lite": "^0.7.2",
+    "koffi": "^3.0.2",
+    "serialport": "^13.0.0",
+    "ssh2": "^1.16.0",
+    "ssh2-streams": "^0.4.10",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-search": "^0.13.0",
+    "xterm-addon-web-links": "^0.9.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "jp.waterm.app",
+    "productName": "和ターミナル",
+    "copyright": "Copyright (c) 2026 WaTerm",
+    "asar": false,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "tetorisu1234-png",
+        "repo": "waterm"
+      }
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!test-*.js",
+      "!**/*.md",
+      "!build/png/**",
+      "!release/**",
+      "!.git/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "WaTerm-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "和ターミナル",
+      "installerLanguages": [
+        "ja_JP"
+      ],
+      "language": "1041",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
