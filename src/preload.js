@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // 設定・セッション・スニペット
@@ -88,6 +88,9 @@ contextBridge.exposeInMainWorld('api', {
   sftpList: (id, p) => ipcRenderer.invoke('sftp:list', { id, p }),
   sftpDownload: (id, remotePath, name) => ipcRenderer.invoke('sftp:download', { id, remotePath, name }),
   sftpUpload: (id, remoteDir) => ipcRenderer.invoke('sftp:upload', { id, remoteDir }),
+  sftpUploadPaths: (id, remoteDir, paths) => ipcRenderer.invoke('sftp:uploadPaths', { id, remoteDir, paths }),
+  // ドロップされた File からローカル絶対パスを取得（Electron33: File.path 廃止のため webUtils を使用）
+  getPathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return (file && file.path) || ''; } },
   sftpMkdir: (id, p) => ipcRenderer.invoke('sftp:mkdir', { id, p }),
   sftpDelete: (id, p, isDir) => ipcRenderer.invoke('sftp:delete', { id, p, isDir }),
   sftpRename: (id, oldP, newP) => ipcRenderer.invoke('sftp:rename', { id, oldP, newP }),

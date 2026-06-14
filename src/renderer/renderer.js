@@ -36,6 +36,7 @@ async function init() {
   SNIPPETS = (await api.loadSnippets()) || [];
   applyTheme();
   $('#sidebar').classList.toggle('collapsed', !SETTINGS.sidebar);
+  HL_RULES = parseHighlightRules(SETTINGS.highlightText);
   renderSessions(); renderSnippets();
   wireUI(); wireMenu(); wireData();
   renderMenuBar();
@@ -51,6 +52,23 @@ function persistSessions() { api.saveSessions(DB); }
 function persistSnippets() { api.saveSnippets(SNIPPETS); }
 
 /* ---------------- サイドバー：セッション ---------------- */
+// セッション一覧の最大高さ：下のスニペット/全タブ送信が隠れない範囲に制限
+function maxSessListHeight() { return Math.max(120, Math.round(window.innerHeight * 0.5)); }
+let dragSessId = null;
+function clearDropMarks() { document.querySelectorAll('.sess-list .drop-before, .sess-list .drop-after, .sess-list .drop-into').forEach((e) => e.classList.remove('drop-before', 'drop-after', 'drop-into')); }
+// ドラッグ移動：dragId を targetId の前/後ろ（または folder の末尾）へ移し、フォルダも設定
+function moveSession(dragId, targetId, folder, after) {
+  const di = DB.sessions.findIndex((x) => x.id === dragId); if (di < 0) return;
+  const [moved] = DB.sessions.splice(di, 1);
+  moved.folder = folder || '';
+  if (targetId && targetId !== dragId) {
+    const ti = DB.sessions.findIndex((x) => x.id === targetId);
+    if (ti < 0) DB.sessions.push(moved); else DB.sessions.splice(after ? ti + 1 : ti, 0, moved);
+  } else {
+    DB.sessions.push(moved); // フォルダ見出し/空きスペースへのドロップは末尾へ
+  }
+  persistSessions(); renderSessions();
+}
 function renderSessions() {
   const filter = ($('#sessFilter').value || '').toLowerCase();
   const ul = $('#sessList'); ul.innerHTML = '';
@@ -62,7 +80,13 @@ function renderSessions() {
   }
   const folders = Object.keys(groups).sort();
   for (const f of folders) {
-    if (f) { const fh = elx('div', 'sess-folder', '📂 ' + f); ul.appendChild(fh); }
+    if (f) {
+      const fh = elx('div', 'sess-folder', '📂 ' + f);
+      fh.addEventListener('dragover', (e) => { if (!dragSessId) return; e.preventDefault(); e.stopPropagation(); clearDropMarks(); fh.classList.add('drop-into'); });
+      fh.addEventListener('dragleave', () => fh.classList.remove('drop-into'));
+      fh.addEventListener('drop', (e) => { if (!dragSessId) return; e.preventDefault(); e.stopPropagation(); const id = dragSessId; clearDropMarks(); moveSession(id, null, f, true); });
+      ul.appendChild(fh);
+    }
     for (const s of groups[f]) {
       const li = elx('li'); li.dataset.id = s.id;
       if (s.id === selectedSessionId) li.classList.add('selected');
@@ -81,6 +105,21 @@ function renderSessions() {
         { label: '複製', fn: () => dupSession(s.id) },
         { label: '削除', fn: () => delSession(s.id) },
       ]); };
+      // ドラッグで並べ替え／フォルダ移動
+      li.draggable = true;
+      li.addEventListener('dragstart', (e) => { dragSessId = s.id; if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', s.id); } catch (_) {} } setTimeout(() => li.classList.add('dragging'), 0); });
+      li.addEventListener('dragend', () => { li.classList.remove('dragging'); dragSessId = null; clearDropMarks(); });
+      li.addEventListener('dragover', (e) => {
+        if (!dragSessId || dragSessId === s.id) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+        clearDropMarks(); li.classList.add(after ? 'drop-after' : 'drop-before');
+      });
+      li.addEventListener('drop', (e) => {
+        if (!dragSessId) return; e.preventDefault(); e.stopPropagation();
+        const id = dragSessId; const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+        clearDropMarks(); moveSession(id, s.id, s.folder || '', after);
+      });
       ul.appendChild(li);
     }
   }
@@ -103,6 +142,11 @@ function openEditor(id) {
   $('#fKey').value = s.keyPath || '';
   $('#fPhrase').value = '';
   $('#fLegacy').checked = !!s.legacy;
+  // 踏み台候補：自分以外のSSHセッション
+  const jumpSel = $('#fJump'); jumpSel.innerHTML = '<option value="">なし（直接接続）</option>';
+  for (const o of DB.sessions) { if (o.id !== id && (o.protocol || 'ssh') === 'ssh') { const op = document.createElement('option'); op.value = o.id; op.textContent = o.name + (o.host ? ' (' + o.host + ')' : ''); jumpSel.appendChild(op); } }
+  jumpSel.value = s.jumpId || '';
+  $('#fAutoReconnect').checked = !!s.autoReconnect;
   $('#fEnc').value = s.encoding || 'utf8';
   $('#fNl').value = s.newline || (s.protocol === 'telnet' ? 'crlf' : 'cr');
   $('#fTermType').value = s.termType || 'xterm-256color';
@@ -127,6 +171,7 @@ function openEditor(id) {
   $('#fDrives').checked = !!s.drives;
   $('#fMultimon').checked = !!s.multimon;
   $('#fAdmin').checked = !!s.adminSession;
+  setAdvOpen(hasAdvancedValues(s)); // 新規は折りたたみ、詳細設定済みなら展開
   updateModalProto();
   $('#modal').classList.remove('hidden');
   $('#fName').focus();
@@ -143,14 +188,29 @@ function onProtoChange() {
 function updateModalProto() {
   const proto = $('#fProto').value;
   const ssh = proto === 'ssh', serial = proto === 'serial', rdp = proto === 'rdp';
-  document.querySelectorAll('.netOnly').forEach((e) => e.style.display = serial ? 'none' : '');
-  document.querySelectorAll('.sshOnly').forEach((e) => e.style.display = ssh ? '' : 'none');
-  document.querySelectorAll('.serialOnly').forEach((e) => e.style.display = serial ? '' : 'none');
-  document.querySelectorAll('.rdpOnly').forEach((e) => e.style.display = rdp ? '' : 'none');
-  document.querySelectorAll('.termOnly').forEach((e) => e.style.display = rdp ? 'none' : '');
   const key = ssh && $('#fAuth').value === 'key';
-  document.querySelectorAll('.keyOnly').forEach((e) => e.style.display = key ? '' : 'none');
+  // プロトコルに合わない行を proto-hide。adv(詳細)の出し分けは CSS の show-adv が担当
+  const setShow = (sel, show) => document.querySelectorAll(sel).forEach((e) => e.classList.toggle('proto-hide', !show));
+  setShow('.netOnly', !serial);
+  setShow('.sshOnly', ssh);
+  setShow('.serialOnly', serial);
+  setShow('.rdpOnly', rdp);
+  setShow('.termOnly', !rdp);
+  setShow('.keyOnly', key);
   if (serial) populateSerialPorts();
+}
+// 詳細設定の展開/折りたたみ
+function setAdvOpen(open) {
+  $('#modal').classList.toggle('show-adv', open);
+  const b = $('#advToggle'); if (b) b.textContent = open ? '▾ 詳細設定を隠す' : '▸ 詳細設定を表示';
+}
+function hasAdvancedValues(s) {
+  if (!s) return false;
+  return !!(s.legacy || s.jumpId || s.autoReconnect || (s.authType === 'key') || (s.folder && s.folder.trim())
+    || (s.loginCommands && s.loginCommands.trim()) || (s.forwards && s.forwards.trim())
+    || (s.encoding && s.encoding !== 'utf8') || (s.termType && s.termType !== 'xterm-256color') || s.localEcho
+    || s.domain || s.drives || s.multimon || s.adminSession
+    || (s.parity && s.parity !== 'none') || (s.flow && s.flow !== 'none') || (s.dataBits && String(s.dataBits) !== '8') || (s.stopBits && String(s.stopBits) !== '1'));
 }
 async function populateSerialPorts(selected) {
   const sel = $('#fSerialPort');
@@ -185,6 +245,8 @@ async function saveEditor() {
   s.authType = $('#fAuth').value;
   s.keyPath = $('#fKey').value.trim();
   s.legacy = $('#fLegacy').checked;
+  s.jumpId = $('#fJump').value || '';
+  s.autoReconnect = $('#fAutoReconnect').checked;
   s.encoding = $('#fEnc').value;
   s.newline = $('#fNl').value;
   s.termType = $('#fTermType').value;
@@ -225,6 +287,17 @@ async function buildCfg(s, cols, rows) {
   if (s.passwordStored) cfg.password = await api.decrypt(s.passwordStored);
   if (s.phraseStored) cfg.passphrase = await api.decrypt(s.phraseStored);
   if (s.passphrase) cfg.passphrase = s.passphrase;
+  // 踏み台(ProxyJump)：別セッションの資格情報を復号して渡す
+  if (s.protocol === 'ssh' && s.jumpId) {
+    const j = DB.sessions.find((x) => x.id === s.jumpId);
+    if (j) {
+      const jump = { host: j.host, port: Number(j.port) || 22, username: j.username, authType: j.authType || 'password', legacy: !!j.legacy, keyPath: j.keyPath || '' };
+      if (j.passwordStored) jump.password = await api.decrypt(j.passwordStored);
+      if (j.password) jump.password = j.password;
+      if (j.phraseStored) jump.passphrase = await api.decrypt(j.phraseStored);
+      cfg.jump = jump;
+    }
+  }
   return cfg;
 }
 // ターミナルタブ(xterm + ラッパ + 配線)を生成する共通処理
@@ -529,6 +602,7 @@ function setState(st) {
 }
 function closeTab(id) {
   const tab = tabs.get(id); if (!tab) return;
+  if (tab.reconnectTimer) { try { clearTimeout(tab.reconnectTimer); } catch (_) {} tab.reconnecting = false; }
   if (tab.macro) { try { tab.macro.stop('タブを閉じました'); } catch (_) {} }
   if (tab.ttl && !tab.ttl.done) { try { tab.ttl.interp.stop(); if (tab.ttlIo) tab.ttlIo.cancel(); tab.ttl.done = true; } catch (_) {} }
   api.connClose(id);
@@ -545,7 +619,7 @@ function closeTab(id) {
 
 /* ---------------- データ / ステータス受信 ---------------- */
 function wireData() {
-  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { t.term.write(data); if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); } });
+  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); t.term.write(applyHighlights(data, t)); } });
   api.onTransferDone(({ id }) => { const t = tabs.get(id); if (t) { t.xferActive = false; if (id === activeId) updateXferBtn(); } });
   api.onAdoptTab(adoptTab);
   api.onMonitorData(onMonitorData);
@@ -562,7 +636,25 @@ function wireData() {
       if (status === 'error' && message) t.term.writeln('\x1b[31m✖ ' + message + '\x1b[0m');
       if (status === 'closed') t.term.writeln('\x1b[90m── 接続が閉じられました ──\x1b[0m');
     }
+    if (status === 'connected') { t.everConnected = true; t.reconnectAttempts = 0; }
+    // 自動再接続：一度つながった接続が切れた/エラーになったら再接続（RDPは対象外）
+    if ((status === 'closed' || status === 'error') && t.session && t.session.autoReconnect && t.everConnected && !t.isRdp) {
+      scheduleReconnect(t);
+    }
   });
+}
+function scheduleReconnect(t) {
+  if (t.reconnecting || !tabs.has(t.id)) return;
+  t.reconnectAttempts = (t.reconnectAttempts || 0) + 1;
+  if (t.reconnectAttempts > 20) { if (t.term) t.term.writeln('\x1b[31m[自動再接続] 上限(20回)に達しました。⟳ 再接続 で手動接続できます\x1b[0m'); return; }
+  t.reconnecting = true;
+  const delay = Math.min(15000, 2000 * t.reconnectAttempts);
+  if (t.term) t.term.writeln('\x1b[33m[自動再接続] ' + (delay / 1000) + '秒後に再接続します… (試行 ' + t.reconnectAttempts + ')\x1b[0m');
+  t.reconnectTimer = setTimeout(async () => {
+    t.reconnecting = false;
+    if (!tabs.has(t.id)) return; // 閉じられた
+    try { const cfg = await buildCfg(t.session, t.term.cols, t.term.rows); await api.connOpen(t.id, cfg); } catch (_) {}
+  }, delay);
 }
 
 /* ---------------- クイック接続 ---------------- */
@@ -914,6 +1006,46 @@ function onMonitorData(p) {
   if (p.id === activeId && monVisible() && monMode === 'sess') { appendMonRow(fr, t.monFrames.length - 1); updateMonStat(); }
 }
 function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* ---------------- 出力ハイライト / キーワード通知 ---------------- */
+const HL_COLORS = { yellow: '\x1b[30;43m', red: '\x1b[37;41m', green: '\x1b[30;42m', cyan: '\x1b[30;46m', magenta: '\x1b[30;45m', blue: '\x1b[37;44m' };
+let HL_RULES = [];
+function parseHighlightRules(text) {
+  const out = [];
+  for (const raw of String(text || '').split('\n')) {
+    let line = raw.trim(); if (!line || line.startsWith('#')) continue;
+    let notify = false;
+    if (line[0] === '!') { notify = true; line = line.slice(1).trim(); }
+    let color = notify ? 'red' : 'yellow';
+    const m = line.match(/^(.*?)\s*=\s*(yellow|red|green|cyan|magenta|blue)$/i);
+    if (m) { line = m[1].trim(); color = m[2].toLowerCase(); }
+    if (line) out.push({ kw: line, notify, ansi: HL_COLORS[color] || HL_COLORS.yellow });
+  }
+  return out;
+}
+function applyHighlights(data, t) {
+  if (!HL_RULES.length || !data) return data;
+  let out = data;
+  for (const r of HL_RULES) {
+    let re; try { re = new RegExp(r.kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); } catch (_) { continue; }
+    const before = out;
+    out = out.replace(re, (mm) => r.ansi + mm + '\x1b[0m');
+    if (out !== before && r.notify) notifyMatch(t, r.kw);
+  }
+  return out;
+}
+let _beepCtx = null;
+function beep() { try { _beepCtx = _beepCtx || new (window.AudioContext || window.webkitAudioContext)(); const o = _beepCtx.createOscillator(), g = _beepCtx.createGain(); o.connect(g); g.connect(_beepCtx.destination); o.frequency.value = 880; g.gain.value = 0.06; o.start(); setTimeout(() => { try { o.stop(); } catch (_) {} }, 130); } catch (_) {} }
+function notifyMatch(t, kw) {
+  const now = Date.now();
+  if (t._lastNotify && now - t._lastNotify < 1500) return;
+  t._lastNotify = now;
+  beep();
+  toast('🔔 ' + (t.session ? t.session.name : '') + '：「' + kw + '」を検知');
+  if (t.tabEl) { t.tabEl.classList.remove('flash'); void t.tabEl.offsetWidth; t.tabEl.classList.add('flash'); setTimeout(() => { if (t.tabEl) t.tabEl.classList.remove('flash'); }, 1700); }
+}
+function openHighlight() { $('#hlText').value = SETTINGS.highlightText || ''; $('#hlModal').classList.remove('hidden'); $('#hlText').focus(); }
+function saveHighlight() { SETTINGS.highlightText = $('#hlText').value; HL_RULES = parseHighlightRules(SETTINGS.highlightText); saveSettings(); $('#hlModal').classList.add('hidden'); toast('ハイライト設定を保存（' + HL_RULES.length + '件）'); }
 // --- パケットキャプチャ (tshark) ---
 async function loadInterfaces() {
   const sel = $('#capIface'); sel.innerHTML = '';
@@ -966,6 +1098,7 @@ async function sftpRefresh() {
     tr.appendChild(elx('td', null, fmtTime(it.mtime)));
     tr.appendChild(elx('td', null, it.perms || ''));
     const full = (t.sftpCwd.replace(/\/$/, '') || '') + '/' + it.name;
+    if (it.isDir) tr.dataset.dir = full; // フォルダへのドロップ先
     tr.ondblclick = () => { if (it.isDir) { t.sftpCwd = full; sftpRefresh(); } else { api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }); } };
     tr.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(ev.clientX, ev.clientY, [
       it.isDir ? { label: '開く', fn: () => { t.sftpCwd = full; sftpRefresh(); } } : { label: 'ダウンロード', fn: () => api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }) },
@@ -983,6 +1116,25 @@ function wireSftp() {
   $('#sftpGo').onclick = () => { const t = tabs.get(activeId); if (t) { t.sftpCwd = $('#sftpPath').value; sftpRefresh(); } };
   $('#sftpUpload').onclick = async () => { const t = tabs.get(activeId); if (!t) return; const r = await api.sftpUpload(activeId, t.sftpCwd); if (r && r.ok) { $('#sftpStatus').textContent = r.count + ' 件アップロードしました'; sftpRefresh(); } };
   $('#sftpMkdir').onclick = async () => { const t = tabs.get(activeId); if (!t) return; const nm = await askText('新しいフォルダ名'); if (nm) { const r = await api.sftpMkdir(activeId, t.sftpCwd.replace(/\/$/, '') + '/' + nm); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } };
+  // エクスプローラからファイルをドラッグ&ドロップしてアップロード
+  const sftpEl = $('#sftp');
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  sftpEl.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; sftpEl.classList.add('drop-active'); } });
+  sftpEl.addEventListener('dragleave', (e) => { if (e.target === sftpEl) sftpEl.classList.remove('drop-active'); });
+  sftpEl.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); sftpEl.classList.remove('drop-active');
+    const t = tabs.get(activeId); if (!t) { $('#sftpStatus').textContent = '接続中のタブがありません'; return; }
+    if (t.session && t.session.protocol !== 'ssh') { $('#sftpStatus').textContent = 'SFTPはSSH接続でのみ利用できます'; return; }
+    const paths = Array.from(e.dataTransfer.files || []).map((f) => api.getPathForFile(f)).filter(Boolean);
+    if (!paths.length) return;
+    const row = e.target.closest && e.target.closest('tr[data-dir]');
+    const dir = (row && row.dataset.dir) || t.sftpCwd || '.';
+    $('#sftpStatus').textContent = paths.length + ' 件を ' + dir + ' へアップロード中…';
+    const r = await api.sftpUploadPaths(activeId, dir, paths);
+    if (r && r.ok) { $('#sftpStatus').textContent = r.count + ' 件アップロードしました'; sftpRefresh(); }
+    else $('#sftpStatus').textContent = 'アップロード失敗: ' + ((r && r.error) || '不明');
+  });
 }
 
 /* ---------------- スニペット ---------------- */
@@ -1050,6 +1202,10 @@ function wireUI() {
   $('#btnDup').onclick = () => { if (selectedSessionId) dupSession(selectedSessionId); };
   $('#btnDel').onclick = () => { if (selectedSessionId) delSession(selectedSessionId); };
   $('#sessFilter').oninput = renderSessions;
+  // セッション一覧の空きスペースへドロップ → フォルダ無し(ルート)へ移動
+  const sessUl = $('#sessList');
+  sessUl.addEventListener('dragover', (e) => { if (dragSessId) e.preventDefault(); });
+  sessUl.addEventListener('drop', (e) => { if (!dragSessId) return; e.preventDefault(); const id = dragSessId; clearDropMarks(); moveSession(id, null, '', true); });
   $('#btnImport').onclick = importSessions;
   $('#btnExport').onclick = exportSessions;
   $('#btnSidebar').onclick = toggleSidebar;
@@ -1067,12 +1223,16 @@ function wireUI() {
   $('#modalSave').onclick = saveEditor;
   $('#fProto').onchange = onProtoChange;
   $('#fAuth').onchange = updateModalProto;
+  $('#advToggle').onclick = () => setAdvOpen(!$('#modal').classList.contains('show-adv'));
   $('#fKeyBtn').onclick = async () => { const p = await api.pickKey(); if (p) $('#fKey').value = p; };
   $('#fSerialRefresh').onclick = () => populateSerialPorts();
 
   $('#btnSnipAdd').onclick = () => openSnip(-1);
   $('#snCancel').onclick = () => $('#snipModal').classList.add('hidden');
   $('#snSave').onclick = saveSnip;
+
+  $('#hlCancel').onclick = () => $('#hlModal').classList.add('hidden');
+  $('#hlSave').onclick = saveHighlight;
 
   $('#macroCancel').onclick = () => $('#macroModal').classList.add('hidden');
   $('#macroRun').onclick = runMacroFromModal;
@@ -1120,6 +1280,15 @@ function wireLayout() {
     const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); SETTINGS.sidebarWidth = sb.offsetWidth; saveSettings(); refitActive(); };
     document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
   });
+  // セッション一覧の高さ
+  const sr = $('#sessResizer');
+  if (sr) sr.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const ul = $('#sessList'); const startY = e.clientY, startH = ul.offsetHeight;
+    const move = (ev) => { ul.style.height = Math.max(80, Math.min(maxSessListHeight(), startH + (ev.clientY - startY))) + 'px'; };
+    const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); SETTINGS.sessListHeight = ul.offsetHeight; saveSettings(); };
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+  });
   // パネルのグリップ（下＝高さ／横＝幅）
   document.querySelectorAll('.dock-grip').forEach((grip) => grip.addEventListener('pointerdown', (e) => startGripDrag(e, grip.dataset.dock)));
   // ドック位置切替（下↔横）
@@ -1164,6 +1333,7 @@ function toggleDockPos(which) {
 }
 function applyLayoutSettings() {
   if (SETTINGS.sidebarWidth) $('#sidebar').style.width = SETTINGS.sidebarWidth + 'px';
+  if (SETTINGS.sessListHeight) $('#sessList').style.height = Math.min(SETTINGS.sessListHeight, maxSessListHeight()) + 'px';
   setDockPos('sftp', SETTINGS.sftpDockPos === 'side' ? 'side' : 'bottom');
   setDockPos('monitor', SETTINGS.monitorDockPos === 'side' ? 'side' : 'bottom');
 }
@@ -1210,6 +1380,7 @@ function runMenuAction(action) {
     case 'quit': api.appQuit(); break;
     case 'about': api.appAbout(); break;
     case 'check-update': checkUpdate(); break;
+    case 'highlight': openHighlight(); break;
   }
 }
 async function checkUpdate() {
@@ -1254,6 +1425,7 @@ const MENUS = [
     { label: 'サイドバー表示切替', a: 'toggle-sidebar' },
     { label: 'SFTPパネル表示切替', a: 'toggle-sftp' },
     { label: '通信モニタ表示切替', a: 'toggle-monitor' },
+    { label: '出力ハイライト設定…', a: 'highlight' },
     { label: 'ログにタイムスタンプを付ける(切替)', a: 'toggle-log-ts' },
     { sep: true },
     { label: '開発者ツール', a: 'devtools' },

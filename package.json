@@ -1,6 +1,6 @@
 {
   "name": "waterm",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "和ターミナル - 日本語SSH/Telnet/シリアル/RDP/SFTPクライアント",
   "main": "src/main.js",
   "author": "WaTerm",

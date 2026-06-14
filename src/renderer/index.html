@@ -49,6 +49,7 @@
         </div>
         <input id="sessFilter" class="filter" type="text" placeholder="🔍 セッションを絞り込み" />
         <ul id="sessList" class="sess-list"></ul>
+        <div id="sessResizer" class="vsplit" title="ドラッグでセッション一覧の高さを変更"></div>
         <div class="side-actions">
           <button id="btnEdit">編集</button>
           <button id="btnDup">複製</button>
@@ -193,40 +194,43 @@
             <option>115200</option><option>230400</option><option>460800</option><option>921600</option>
           </select>
         </div>
-        <div class="row serialOnly"><label>データビット</label><select id="fDataBits"><option>8</option><option>7</option><option>6</option><option>5</option></select></div>
-        <div class="row serialOnly"><label>パリティ</label><select id="fParity"><option value="none">なし</option><option value="even">偶数(even)</option><option value="odd">奇数(odd)</option></select></div>
-        <div class="row serialOnly"><label>ストップビット</label><select id="fStopBits"><option>1</option><option>2</option></select></div>
-        <div class="row serialOnly"><label>フロー制御</label><select id="fFlow"><option value="none">なし</option><option value="rtscts">RTS/CTS(ハード)</option><option value="xonxoff">Xon/Xoff(ソフト)</option></select></div>
-        <div class="row sshOnly"><label>認証方式</label>
+        <div class="row serialOnly adv"><label>データビット</label><select id="fDataBits"><option>8</option><option>7</option><option>6</option><option>5</option></select></div>
+        <div class="row serialOnly adv"><label>パリティ</label><select id="fParity"><option value="none">なし</option><option value="even">偶数(even)</option><option value="odd">奇数(odd)</option></select></div>
+        <div class="row serialOnly adv"><label>ストップビット</label><select id="fStopBits"><option>1</option><option>2</option></select></div>
+        <div class="row serialOnly adv"><label>フロー制御</label><select id="fFlow"><option value="none">なし</option><option value="rtscts">RTS/CTS(ハード)</option><option value="xonxoff">Xon/Xoff(ソフト)</option></select></div>
+        <div class="row netOnly"><label>パスワード</label><input id="fPass" type="password" placeholder="(任意・保存は暗号化されます)" /></div>
+        <div class="row adv-toggle"><label></label><button type="button" id="advToggle" class="advtoggle">▸ 詳細設定を表示</button></div>
+        <div class="row sshOnly adv"><label>認証方式</label>
           <select id="fAuth"><option value="password">パスワード</option><option value="key">秘密鍵</option></select>
         </div>
-        <div class="row netOnly"><label>パスワード</label><input id="fPass" type="password" placeholder="(任意・保存は暗号化されます)" /></div>
         <div class="row sshOnly keyOnly"><label>秘密鍵</label><div class="keyrow"><input id="fKey" type="text" placeholder="秘密鍵ファイルのパス" /><button id="fKeyBtn">参照</button></div></div>
         <div class="row sshOnly keyOnly"><label>パスフレーズ</label><input id="fPhrase" type="password" /></div>
-        <div class="row sshOnly"><label class="chk"><input type="checkbox" id="fLegacy" /> 古い暗号方式を許可（旧Cisco/古いAP等：dh-group1-sha1, ssh-rsa/dss, aes-cbc, 3des, hmac-sha1/md5）</label></div>
-        <div class="row rdpOnly"><label>ドメイン</label><input id="fDomain" type="text" placeholder="(任意) AD ドメイン名" /></div>
-        <div class="row rdpOnly"><label>画面</label>
+        <div class="row sshOnly adv"><label class="chk"><input type="checkbox" id="fLegacy" /> 古い暗号方式を許可（旧Cisco/古いAP等：dh-group1-sha1, ssh-rsa/dss, aes-cbc, 3des, hmac-sha1/md5）</label></div>
+        <div class="row sshOnly adv"><label>踏み台(ProxyJump)</label><select id="fJump"><option value="">なし（直接接続）</option></select></div>
+        <div class="row rdpOnly adv"><label>ドメイン</label><input id="fDomain" type="text" placeholder="(任意) AD ドメイン名" /></div>
+        <div class="row rdpOnly adv"><label>画面</label>
           <select id="fScreen"><option value="full">全画面</option><option value="window">ウィンドウ</option></select>
         </div>
-        <div class="row rdpOnly"><label>解像度</label><div class="keyrow"><input id="fWidth" type="number" value="1280" style="width:90px" /> <span style="padding-top:5px">×</span> <input id="fHeight" type="number" value="800" style="width:90px" /></div></div>
-        <div class="row rdpOnly"><label class="chk"><input type="checkbox" id="fClipboard" checked /> クリップボード共有</label></div>
-        <div class="row rdpOnly"><label class="chk"><input type="checkbox" id="fDrives" /> ローカルドライブ共有</label></div>
-        <div class="row rdpOnly"><label class="chk"><input type="checkbox" id="fMultimon" /> マルチモニター</label></div>
-        <div class="row rdpOnly"><label class="chk"><input type="checkbox" id="fAdmin" /> 管理セッション(/admin)</label></div>
-        <div class="row termOnly"><label>文字コード</label>
+        <div class="row rdpOnly adv"><label>解像度</label><div class="keyrow"><input id="fWidth" type="number" value="1280" style="width:90px" /> <span style="padding-top:5px">×</span> <input id="fHeight" type="number" value="800" style="width:90px" /></div></div>
+        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fClipboard" checked /> クリップボード共有</label></div>
+        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fDrives" /> ローカルドライブ共有</label></div>
+        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fMultimon" /> マルチモニター</label></div>
+        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fAdmin" /> 管理セッション(/admin)</label></div>
+        <div class="row termOnly adv"><label>文字コード</label>
           <select id="fEnc"><option value="utf8">UTF-8</option><option value="shift_jis">Shift_JIS</option><option value="euc-jp">EUC-JP</option></select>
         </div>
-        <div class="row termOnly"><label>改行コード</label>
+        <div class="row termOnly adv"><label>改行コード</label>
           <select id="fNl"><option value="cr">CR</option><option value="lf">LF</option><option value="crlf">CR+LF</option></select>
         </div>
-        <div class="row termOnly"><label>端末タイプ</label>
+        <div class="row termOnly adv"><label>端末タイプ</label>
           <select id="fTermType"><option value="xterm-256color">xterm-256color</option><option value="xterm">xterm</option><option value="vt100">vt100</option><option value="vt220">vt220</option><option value="linux">linux</option><option value="ansi">ansi</option></select>
         </div>
-        <div class="row termOnly"><label class="chk"><input type="checkbox" id="fEcho" /> ローカルエコー</label></div>
-        <div class="row"><label>フォルダ</label><input id="fFolder" type="text" placeholder="(任意) 分類名 例：社内NW" /></div>
-        <div class="row termOnly"><label>ログイン後コマンド</label><textarea id="fLogin" placeholder="接続後に自動送信するコマンド（1行に1コマンド）"></textarea></div>
-        <div class="row sshOnly"><label>ポート転送<br><span class="muted" style="font-weight:normal;font-size:11px">トンネル(任意)</span></label><textarea id="fForwards" placeholder="1行に1ルール（sshの -L/-R/-D 形式）&#10;L 8080:127.0.0.1:80     ローカル転送&#10;L 0.0.0.0:5000:db:5432  公開＋宛先指定&#10;R 9000:127.0.0.1:3000   リモート転送&#10;D 1080                  動的(SOCKS5)"></textarea></div>
-        <div class="row sshOnly"><label>キープアライブ秒</label><input id="fKeep" type="number" value="15" /></div>
+        <div class="row termOnly adv"><label class="chk"><input type="checkbox" id="fEcho" /> ローカルエコー</label></div>
+        <div class="row termOnly adv"><label class="chk"><input type="checkbox" id="fAutoReconnect" /> 切断時に自動再接続</label></div>
+        <div class="row adv"><label>フォルダ</label><input id="fFolder" type="text" placeholder="(任意) 分類名 例：社内NW" /></div>
+        <div class="row termOnly adv"><label>ログイン後コマンド</label><textarea id="fLogin" placeholder="接続後に自動送信するコマンド（1行に1コマンド）"></textarea></div>
+        <div class="row sshOnly adv"><label>ポート転送<br><span class="muted" style="font-weight:normal;font-size:11px">トンネル(任意)</span></label><textarea id="fForwards" placeholder="1行に1ルール（sshの -L/-R/-D 形式）&#10;L 8080:127.0.0.1:80     ローカル転送&#10;L 0.0.0.0:5000:db:5432  公開＋宛先指定&#10;R 9000:127.0.0.1:3000   リモート転送&#10;D 1080                  動的(SOCKS5)"></textarea></div>
+        <div class="row sshOnly adv"><label>キープアライブ秒</label><input id="fKeep" type="number" value="15" /></div>
       </div>
       <div class="modal-foot">
         <button id="modalCancel">キャンセル</button>
@@ -245,6 +249,23 @@
         <div class="row"><label class="chk"><input type="checkbox" id="snEnter" checked /> 末尾に改行を付けて実行</label></div>
       </div>
       <div class="modal-foot"><button id="snCancel">キャンセル</button><button id="snSave" class="primary">保存</button></div>
+    </div>
+  </div>
+
+  <!-- 出力ハイライト設定モーダル -->
+  <div id="hlModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">出力ハイライト / キーワード通知</div>
+      <div class="modal-body">
+        <div class="row" style="align-items:flex-start"><label>ルール</label><textarea id="hlText" style="height:170px;font-family:Consolas,monospace" placeholder="1行に1キーワード。受信した出力中の一致箇所を色付けします。&#10;error&#10;%LINK-3-UPDOWN&#10;Down=red&#10;!CRITICAL          ← 行頭の ! で 通知(音＋トースト＋タブ点滅)&#10;!Authentication failed=red"></textarea></div>
+        <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+          ・1行＝1キーワード（部分一致）。既定は黄色ハイライト<br>
+          ・<b>=色</b> で色指定：yellow / red / green / cyan / magenta / blue（例 <code>Down=red</code>）<br>
+          ・行頭に <b>!</b> を付けると一致時に<b>通知</b>（ビープ音＋トースト＋タブ点滅）<br>
+          ・<b>#</b> で始まる行はコメント。全セッション共通で適用されます
+        </span></div>
+      </div>
+      <div class="modal-foot"><button id="hlCancel">キャンセル</button><button id="hlSave" class="primary">保存</button></div>
     </div>
   </div>
 

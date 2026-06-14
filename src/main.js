@@ -185,6 +185,7 @@ function closeConn(id) {
   try { if (entry.xfer) entry.xfer.abort(); } catch (_) {}
   try { (entry.fwdServers || []).forEach((s) => { try { s.close(); } catch (_) {} }); } catch (_) {}
   try { if (entry.type === 'ssh' && entry.client) entry.client.end(); } catch (_) {}
+  try { if (entry.jumpClient) entry.jumpClient.end(); } catch (_) {}
   try { if (entry.type === 'telnet' && entry.sock) entry.sock.destroy(); } catch (_) {}
   try { if (entry.type === 'serial' && entry.port) { entry.port.close(); } } catch (_) {}
   try { if (entry.type === 'rdp' && entry.proc) { entry.proc.kill(); } } catch (_) {}
@@ -518,15 +519,46 @@ function sshConnect(wc, id, cfg) {
       if (key) { connectCfg.privateKey = key; if (cfg.passphrase) connectCfg.passphrase = cfg.passphrase; if (cfg.password) connectCfg.password = cfg.password; }
       else connectCfg.password = cfg.password || '';
 
-      try { client.connect(connectCfg); }
-      catch (e) {
-        if (handleUnsupported(e.message, client)) return;
-        send(wc, 'conn:status', { id, status: 'error', message: e.message });
-        done({ ok: false, error: e.message });
-      }
+      const doConnect = () => {
+        try {
+          if (entry.jumpClient) { // 踏み台(ProxyJump)経由：踏み台から target へ forwardOut して sock に使う
+            entry.jumpClient.forwardOut('127.0.0.1', 0, cfg.host, cfg.port || 22, (err, stream) => {
+              if (err) { send(wc, 'conn:status', { id, status: 'error', message: '踏み台経由の接続に失敗: ' + err.message }); done({ ok: false, error: err.message }); return; }
+              connectCfg.sock = stream;
+              try { client.connect(connectCfg); }
+              catch (e2) { if (!handleUnsupported(e2.message, client)) { send(wc, 'conn:status', { id, status: 'error', message: e2.message }); done({ ok: false, error: e2.message }); } }
+            });
+          } else { client.connect(connectCfg); }
+        } catch (e) {
+          if (handleUnsupported(e.message, client)) return;
+          send(wc, 'conn:status', { id, status: 'error', message: e.message });
+          done({ ok: false, error: e.message });
+        }
+      };
+      doConnect();
     }
-    attempt();
+    if (cfg.jump && cfg.jump.host) {
+      connectJump(cfg.jump, (jc) => { entry.jumpClient = jc; send(wc, 'conn:data', { id, data: '\r\n\x1b[36m[踏み台] ' + cfg.jump.host + ' 経由で接続します\x1b[0m\r\n' }); attempt(); },
+        (errMsg) => { send(wc, 'conn:status', { id, status: 'error', message: '踏み台接続に失敗: ' + errMsg }); done({ ok: false, error: errMsg }); });
+    } else {
+      attempt();
+    }
   });
+}
+// 踏み台(ProxyJump)用のSSH接続を確立し、ready で onReady(client) を呼ぶ
+function connectJump(jump, onReady, onErr) {
+  const jc = new Client();
+  let jkey = null;
+  if (jump.authType === 'key' && jump.keyPath) { try { jkey = fs.readFileSync(jump.keyPath); } catch (e) { onErr('踏み台の秘密鍵を読めません: ' + e.message); return; } }
+  const jalgos = jump.legacy ? JSON.parse(JSON.stringify(LEGACY_ALGOS)) : null;
+  jc.on('ready', () => onReady(jc));
+  jc.on('error', (e) => onErr(e.message));
+  jc.on('keyboard-interactive', (n, i, l, p, cb) => cb(p.map(() => jump.password || '')));
+  const jcfg = { host: jump.host, port: jump.port || 22, username: jump.username, readyTimeout: 20000, tryKeyboard: true };
+  if (jalgos) jcfg.algorithms = jalgos;
+  if (jkey) { jcfg.privateKey = jkey; if (jump.passphrase) jcfg.passphrase = jump.passphrase; if (jump.password) jcfg.password = jump.password; }
+  else jcfg.password = jump.password || '';
+  try { jc.connect(jcfg); } catch (e) { onErr(e.message); }
 }
 
 // ---------------------------------------------------------------------------
@@ -902,6 +934,21 @@ ipcMain.handle('sftp:upload', async (e, { id, remoteDir }) => {
       await new Promise((res, rej) => sftp.fastPut(fp, rp, (err) => err ? rej(err) : res()));
     }
     return { ok: true, count: r.filePaths.length };
+  } catch (er) { return { ok: false, error: er.message }; }
+});
+// ドラッグ&ドロップで渡されたローカルパスを remoteDir へアップロード
+ipcMain.handle('sftp:uploadPaths', async (e, { id, remoteDir, paths }) => {
+  try {
+    const sftp = await getSftp(id);
+    let count = 0;
+    for (const fp of (paths || [])) {
+      let st; try { st = fs.statSync(fp); } catch (_) { continue; }
+      if (st.isDirectory()) continue; // フォルダは対象外（ファイルのみ）
+      const rp = remoteDir.replace(/\/$/, '') + '/' + path.basename(fp);
+      await new Promise((res, rej) => sftp.fastPut(fp, rp, (err) => err ? rej(err) : res()));
+      count++;
+    }
+    return { ok: true, count };
   } catch (er) { return { ok: false, error: er.message }; }
 });
 ipcMain.handle('sftp:mkdir', async (e, { id, p }) => {
