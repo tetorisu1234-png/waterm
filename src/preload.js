@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('api', {
   monitorExport: (id) => ipcRenderer.invoke('monitor:export', { id }),
   onMonitorData: (cb) => ipcRenderer.on('monitor:data', (e, p) => cb(p)),
 
+  // ネットワーク診断（ローカルで ping / tracert / nslookup）
+  diagRun: (kind, host, count) => ipcRenderer.invoke('diag:run', { kind, host, count }),
+  diagStop: () => ipcRenderer.send('diag:stop'),
+  onDiagData: (cb) => ipcRenderer.on('diag:data', (e, p) => cb(p)),
+  onDiagEnd: (cb) => ipcRenderer.on('diag:end', (e, p) => cb(p)),
+
   // パケットキャプチャ（tshark）
   captureTshark: () => ipcRenderer.invoke('capture:tshark'),
   captureInterfaces: () => ipcRenderer.invoke('capture:interfaces'),

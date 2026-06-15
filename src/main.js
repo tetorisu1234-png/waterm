@@ -21,6 +21,7 @@ const iconv = require('iconv-lite');
 // ---------------------------------------------------------------------------
 const DATA_DIR = app.getPath('userData');
 const SESS_FILE = path.join(DATA_DIR, 'waterm-sessions.json');
+const SESS_BAK = path.join(DATA_DIR, 'waterm-sessions.bak');       // 直近の「中身あり」セッションの退避先
 const SET_FILE = path.join(DATA_DIR, 'waterm-settings.json');
 const KNOWN_FILE = path.join(DATA_DIR, 'waterm-knownhosts.json');
 const SNIP_FILE = path.join(DATA_DIR, 'waterm-snippets.json');
@@ -28,9 +29,44 @@ const SNIP_FILE = path.join(DATA_DIR, 'waterm-snippets.json');
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }
 }
+// 原子的書き込み（tmpへ書いてrename）。途中中断による破損(0バイト/欠け)を防ぐ
 function writeJson(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); return true; }
-  catch (e) { return false; }
+  try {
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+    return true;
+  } catch (e) { return false; }
+}
+function sessCount(d) { return (d && Array.isArray(d.sessions)) ? d.sessions.length : 0; }
+// セッション保存：空で上書きされても復元できるよう、保存前に「中身あり」の現状を .bak へ退避してから書く
+function saveSessions(data) {
+  try {
+    const cur = readJson(SESS_FILE, null);
+    if (sessCount(cur) > 0) { try { fs.copyFileSync(SESS_FILE, SESS_BAK); } catch (_) {} }
+  } catch (_) {}
+  return writeJson(SESS_FILE, data);
+}
+// セッション読込：本体が壊れて読めない時は .bak から自動復旧（壊れた本体は .corrupt へ退避）
+function loadSessions() {
+  let raw;
+  try { raw = fs.readFileSync(SESS_FILE, 'utf8'); }
+  catch (_) { return readJson(SESS_BAK, { folders: [], sessions: [] }); } // 本体無し → .bak（無ければ空）
+  try {
+    const d = JSON.parse(raw);
+    // 中身があり .bak が未作成なら、この時点で1つ作っておく（起動直後から復元材料を確保）
+    if (sessCount(d) > 0 && !fs.existsSync(SESS_BAK)) { try { fs.copyFileSync(SESS_FILE, SESS_BAK); } catch (_) {} }
+    return d;
+  } catch (_) {
+    // 本体が破損 → .bak に中身があれば復旧
+    const bak = readJson(SESS_BAK, null);
+    if (sessCount(bak) > 0) {
+      try { fs.copyFileSync(SESS_FILE, SESS_FILE + '.corrupt'); } catch (_) {}
+      writeJson(SESS_FILE, bak);
+      return bak;
+    }
+    return { folders: [], sessions: [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +696,7 @@ function registerWindow(win) {
   win.on('closed', () => {
     windows.delete(win);
     const cp2 = captureProcs.get(wc.id); if (cp2) { try { cp2.kill(); } catch (_) {} captureProcs.delete(wc.id); }
+    const dp = diagProcs.get(wc.id); if (dp) { try { dp.kill(); } catch (_) {} diagProcs.delete(wc.id); }
     for (const [id, en] of conns) { if (en.wc === wc) closeConn(id); }
     if (win === mainWin) mainWin = null;
   });
@@ -742,8 +779,8 @@ function showAbout(win) {
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
-ipcMain.handle('sessions:load', () => readJson(SESS_FILE, { folders: [], sessions: [] }));
-ipcMain.handle('sessions:save', (e, data) => writeJson(SESS_FILE, data));
+ipcMain.handle('sessions:load', () => loadSessions());
+ipcMain.handle('sessions:save', (e, data) => saveSessions(data));
 ipcMain.handle('settings:load', () => readJson(SET_FILE, {}));
 ipcMain.handle('settings:save', (e, data) => writeJson(SET_FILE, data));
 ipcMain.handle('snippets:load', () => readJson(SNIP_FILE, []));
@@ -1191,6 +1228,42 @@ ipcMain.handle('capture:start', (e, { iface, filter }) => {
   return { ok: true };
 });
 ipcMain.on('capture:stop', (e) => { const p = captureProcs.get(e.sender.id); if (p) { try { p.kill(); } catch (_) {} captureProcs.delete(e.sender.id); } });
+
+// ---------------------------------------------------------------------------
+// ネットワーク診断（ローカル実行: ping / tracert / nslookup）
+// 自分のPCから対象ホストへコマンドを実行し、出力を逐次描画先へ流す。
+// 出力は日本語Windowsのコンソール文字コード(CP932)なので iconv で復号する。
+// ---------------------------------------------------------------------------
+const diagProcs = new Map(); // webContents.id -> child process（1ウィンドウ1実行）
+ipcMain.handle('diag:run', (e, { kind, host, count }) => {
+  const h = String(host || '').trim();
+  if (!h) return { ok: false, error: 'ホスト名/IPを入力してください' };
+  // 引数に使える形だけ許可（spawnはshell無しだが、紛れ込み防止に最低限のサニタイズ）
+  if (!/^[A-Za-z0-9._:\-%]+$/.test(h)) return { ok: false, error: 'ホスト名に使用できない文字が含まれています' };
+  const wcid = e.sender.id;
+  const prev = diagProcs.get(wcid); if (prev) { try { prev.kill(); } catch (_) {} diagProcs.delete(wcid); }
+  let cmd, args;
+  if (kind === 'ping') {
+    const n = parseInt(count, 10);
+    cmd = 'ping';
+    args = (!n || n <= 0) ? ['-t', h] : ['-n', String(Math.min(n, 1000)), h]; // 0/空＝連続(-t)
+  } else if (kind === 'tracert') {
+    cmd = 'tracert'; args = ['-h', '30', h];
+  } else if (kind === 'nslookup') {
+    cmd = 'nslookup'; args = [h];
+  } else return { ok: false, error: '不明な診断種別です' };
+  let child;
+  try { child = spawn(cmd, args, { windowsHide: true }); }
+  catch (er) { return { ok: false, error: er.message }; }
+  diagProcs.set(wcid, child);
+  const dec = (b) => { try { return iconv.decode(b, 'cp932'); } catch (_) { return b.toString('utf8'); } };
+  child.stdout.on('data', (b) => send(e.sender, 'diag:data', { text: dec(b) }));
+  child.stderr.on('data', (b) => send(e.sender, 'diag:data', { text: dec(b) }));
+  child.on('error', (er) => { if (diagProcs.get(wcid) === child) diagProcs.delete(wcid); send(e.sender, 'diag:end', { code: -1, error: er.message }); });
+  child.on('close', (code) => { if (diagProcs.get(wcid) === child) diagProcs.delete(wcid); send(e.sender, 'diag:end', { code }); });
+  return { ok: true, cmd: cmd + ' ' + args.join(' ') };
+});
+ipcMain.on('diag:stop', (e) => { const c = diagProcs.get(e.sender.id); if (c) { try { c.kill(); } catch (_) {} diagProcs.delete(e.sender.id); } });
 
 // ---------------------------------------------------------------------------
 // 埋め込みRDP(ネイティブ子ウィンドウ)をChromium描画面より前面に出すため、

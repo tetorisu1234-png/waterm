@@ -101,6 +101,8 @@ function renderSessions() {
       li.ondblclick = () => openSession(s);
       li.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(ev.clientX, ev.clientY, [
         { label: '接続', fn: () => openSession(s) },
+        ...(s.host ? [{ label: '診断 (ping/tracert)', fn: () => openDiag(s.host) }] : []),
+        { sep: true },
         { label: '編集', fn: () => openEditor(s.id) },
         { label: '複製', fn: () => dupSession(s.id) },
         { label: '削除', fn: () => delSession(s.id) },
@@ -633,6 +635,8 @@ function wireData() {
     if (p && p.ok) { toast('⤴ 保存を検知：' + p.name + ' をアップロードしました'); if (sftpVisible()) $('#sftpStatus').textContent = '⤴ ' + p.name + ' を反映しました (' + new Date().toLocaleTimeString('ja-JP') + ')'; if (sftpVisible()) sftpRefresh(); }
     else if (p) toast('アップロード失敗（' + p.name + '）: ' + (p.error || ''), true);
   });
+  api.onDiagData((p) => diagAppend(p.text));
+  api.onDiagEnd((p) => { diagRunning = false; updateDiagButtons(); diagAppend('— 終了' + (p && p.code != null ? '（code ' + p.code + '）' : '') + (p && p.error ? ' ' + p.error : '') + ' —\n'); });
   api.onMonitorData(onMonitorData);
   api.onCapturePacket(onCapturePacket);
   api.onCaptureEnd(onCaptureEnd);
@@ -686,6 +690,7 @@ function wireTabTools() {
   $('#nlSel').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.newline = e.target.value; api.setNewline(activeId, e.target.value); } };
   $('#echoChk').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.localEcho = e.target.checked; api.setLocalEcho(activeId, e.target.checked); } };
   $('#btnFind').onclick = toggleFind;
+  $('#btnDiag').onclick = () => { const t = tabs.get(activeId); openDiag(t && t.session ? (t.session.host || '') : ''); };
   $('#btnSync').onclick = (e) => { if (e.shiftKey) { syncAll(syncCount() === 0); } else toggleSync(); };
   $('#btnReconnect').onclick = () => { const t = tabs.get(activeId); if (!t) return; const s = t.session; closeTab(activeId); openSession(s); };
   $('#btnLog').onclick = async () => {
@@ -941,6 +946,33 @@ async function startTransferFromModal() {
   if (r && r.started) { t.xferActive = true; updateXferBtn(); }
   else if (r && r.error) toast('転送を開始できません: ' + r.error, true);
 }
+/* ---------------- ネットワーク診断 (ローカル ping / tracert / nslookup) ---------------- */
+let diagRunning = false;
+function openDiag(host) {
+  $('#diagHost').value = host || '';
+  if (SETTINGS.diagCount != null) $('#diagCount').value = SETTINGS.diagCount;
+  $('#diagModal').classList.remove('hidden');
+  diagRunning = false; updateDiagButtons();
+  if (!host) $('#diagHost').focus();
+}
+function diagAppend(t) { const el = $('#diagOut'); if (!el) return; el.textContent += t; el.scrollTop = el.scrollHeight; }
+function updateDiagButtons() {
+  $('#diagStop').disabled = !diagRunning;
+  ['#diagPing', '#diagTracert', '#diagNslookup'].forEach((s) => { const b = $(s); if (b) b.disabled = diagRunning; });
+}
+async function runDiag(kind) {
+  if (diagRunning) return;
+  const host = $('#diagHost').value.trim();
+  if (!host) { toast('対象ホストを入力してください', true); $('#diagHost').focus(); return; }
+  const count = $('#diagCount').value;
+  SETTINGS.diagCount = count; saveSettings();
+  const label = kind === 'ping' ? 'ping' : kind === 'tracert' ? 'tracert' : 'nslookup';
+  diagAppend((($('#diagOut').textContent) ? '\n' : '') + '$ ' + label + ' ' + host + '\n');
+  const r = await api.diagRun(kind, host, count);
+  if (r && r.ok) { diagRunning = true; updateDiagButtons(); }
+  else { diagAppend('[エラー] ' + ((r && r.error) || '実行できませんでした') + '\n'); }
+}
+
 /* 検索 */
 function toggleFind() { const fb = $('#findbar'); fb.classList.toggle('hidden'); if (!fb.classList.contains('hidden')) $('#findInput').focus(); }
 function doFind(dir) { const t = tabs.get(activeId); if (!t || !t.search) return; const q = $('#findInput').value; if (!q) return; if (dir < 0) t.search.findPrevious(q); else t.search.findNext(q); }
@@ -1300,6 +1332,15 @@ function wireUI() {
 
   $('#xferCancel').onclick = () => $('#xferModal').classList.add('hidden');
   $('#xferStart').onclick = startTransferFromModal;
+
+  $('#diagPing').onclick = () => runDiag('ping');
+  $('#diagTracert').onclick = () => runDiag('tracert');
+  $('#diagNslookup').onclick = () => runDiag('nslookup');
+  $('#diagStop').onclick = () => api.diagStop();
+  $('#diagClear').onclick = () => { $('#diagOut').textContent = ''; };
+  $('#diagCopy').onclick = () => { const txt = $('#diagOut').textContent; if (txt) { api.clipboardWrite(txt); toast('診断結果をコピーしました'); } };
+  $('#diagClose').onclick = () => { api.diagStop(); $('#diagModal').classList.add('hidden'); };
+  $('#diagHost').onkeydown = (e) => { if (e.key === 'Enter') runDiag('ping'); };
 
   $('#bcastBtn').onclick = broadcast;
   $('#bcastInput').onkeydown = (e) => { if (e.key === 'Enter') broadcast(); };
