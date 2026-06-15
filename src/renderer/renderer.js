@@ -439,7 +439,7 @@ function beginTabDrag(e, id, el, name) {
     } else {
       if (!tearing) { tearing = true; el.classList.add('tearing'); }
       clearShifts(); el.style.transform = '';
-      showTabGhost(ev.clientX, ev.clientY, name);
+      showTabGhost(ev.clientX, ev.clientY, name); // 端でクランプして画面外でも消さない
     }
   };
   const finish = () => { clearShifts(); el.classList.remove('dragging', 'tearing'); document.body.classList.remove('tab-dragging'); hideTabGhost(); };
@@ -468,8 +468,12 @@ function showTabGhost(x, y, name) {
     document.body.appendChild(tabGhostEl);
   }
   tabGhostEl.querySelector('.gname').textContent = name || 'セッション';
-  tabGhostEl.style.left = (x + 12) + 'px'; tabGhostEl.style.top = (y + 14) + 'px';
   tabGhostEl.style.display = 'flex';
+  // カーソルがウィンドウ端／画面外へ出ても消えないよう、ゴーストをビューポート内にクランプして端で止める
+  const w = tabGhostEl.offsetWidth || 180, h = tabGhostEl.offsetHeight || 32;
+  const lx = Math.max(4, Math.min(x + 12, window.innerWidth - w - 4));
+  const ly = Math.max(4, Math.min(y + 14, window.innerHeight - h - 4));
+  tabGhostEl.style.left = lx + 'px'; tabGhostEl.style.top = ly + 'px';
 }
 function hideTabGhost() { if (tabGhostEl) tabGhostEl.style.display = 'none'; }
 // DOM順に合わせて tabs Map の順序を作り直す

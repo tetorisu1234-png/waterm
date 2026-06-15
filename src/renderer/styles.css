@@ -107,7 +107,8 @@ textarea { resize: vertical; min-height: 54px; width: 100%; }
 .tab.active { background: var(--bg); border-color: var(--accent); }
 .tab { user-select: none; transition: transform 0.12s ease; }
 .tab.dragging { opacity: 0.55; z-index: 10; position: relative; transition: none; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
-.tab.tearing { opacity: 0.3; border-style: dashed; box-shadow: none; }
+/* 画面外へドラッグ(切り離し)中：元タブを消さずに見える状態で保持（破線＋アクセント枠で「切り離し」を示す） */
+.tab.tearing { opacity: 0.9; border-style: dashed; border-color: var(--accent); box-shadow: none; }
 body.tab-dragging { cursor: grabbing; }
 .tab-ghost { position: fixed; z-index: 9999; pointer-events: none; display: flex; align-items: center; gap: 7px; padding: 6px 11px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 7px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.55); }
 .tab-ghost .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }

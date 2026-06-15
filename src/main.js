@@ -1094,15 +1094,15 @@ ipcMain.handle('update:check', async () => {
 });
 ipcMain.on('update:install', () => { try { if (autoUpdater) autoUpdater.quitAndInstall(); } catch (_) {} });
 
-// タブのドラッグ移動。ドロップ座標(画面px)から移動先を決める：
-//   別ウィンドウの上 → そのウィンドウへ取り込み／同じウィンドウ内 → 何もしない／どこの上でもない → 新ウィンドウ
+// タブのドラッグ移動。レンダラはタブ列から外して離した時だけこれを呼ぶ。
+//   別ウィンドウの上 → そのウィンドウへ取り込み／それ以外(同じウィンドウ上を含む) → 新ウィンドウへ分離
 ipcMain.handle('window:relocate', (e, { id, session, status, x, y }) => {
   const en = conns.get(id);
   if (!en) return { ok: false, error: '接続がありません' };
   if (en.type === 'rdp') return { ok: false, error: 'RDPタブは移動に対応していません' };
   const srcWin = BrowserWindow.fromWebContents(e.sender);
   const inBounds = (w) => { try { const b = w.getBounds(); return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height; } catch (_) { return false; } };
-  // ソース以外で、ドロップ座標を含むウィンドウを探す
+  // ソース以外で、ドロップ座標を含む別ウィンドウがあればそこへ取り込み（＝戻す/まとめる）
   let target = null;
   for (const w of windows) {
     if (w === srcWin || w.isDestroyed()) continue;
@@ -1114,12 +1114,12 @@ ipcMain.handle('window:relocate', (e, { id, session, status, x, y }) => {
     try { target.focus(); } catch (_) {}
     return { ok: true, moved: true };
   }
-  // 同じウィンドウ内に落とした → そのまま（スナップバック）
-  if (srcWin && !srcWin.isDestroyed() && inBounds(srcWin)) return { ok: true, moved: false };
-  // どのウィンドウの上でもない → 新ウィンドウへ分離
+  // 別ウィンドウの上でない → 列から外して離した時点で新ウィンドウへ分離（同じウィンドウ上でも分離する）
   createDetachedWindow({ id, session, status });
   return { ok: true, moved: true };
 });
+
+
 // 新ウィンドウのレンダラ準備完了 → 引き継ぎタブを送り、描画先(wc)を張り替える
 ipcMain.on('window:ready', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
