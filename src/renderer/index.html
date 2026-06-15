@@ -32,6 +32,9 @@
       <button id="btnSidebar" title="サイドバー (Ctrl+B)">☰</button>
       <button id="btnSftp" title="SFTPパネル (Ctrl+Shift+S)">📁 SFTP</button>
       <button id="btnMonitor" title="通信モニタ / パケットキャプチャ">📡 監視</button>
+      <button id="btnServer" title="内蔵ファイルサーバ (TFTP / HTTP / FTP)">🗄 サーバ</button>
+      <button id="btnScan" title="ネットワークスキャン (ping sweep / port / ARP / SNMP)">🔎 スキャン</button>
+      <button id="btnPalette" title="コマンドパレット (Ctrl+K)">⌘ パレット</button>
       <button id="btnTheme" title="テーマ切替">🌓</button>
     </div>
   </div>
@@ -100,6 +103,7 @@
         <button id="btnTransfer" title="ファイル転送 (XMODEM/YMODEM)">⇅ 転送</button>
         <button id="btnBreak" title="Break送信(シリアル)" class="hidden">⎉ Break</button>
         <button id="btnDiag" title="ネットワーク診断（自分のPCから ping / tracert を実行）">🔧 診断</button>
+        <button id="btnConfig" title="コンフィグ取得・世代保存・差分">📑 Config</button>
         <button id="btnReconnect" title="再接続">⟳ 再接続</button>
         <span id="connState" class="state"></span>
       </div>
@@ -367,11 +371,114 @@ sendln "show version"'></textarea></div>
     </div>
   </div>
 
+  <!-- 内蔵ファイルサーバ (TFTP / HTTP / FTP) -->
+  <div id="fsModal" class="modal hidden">
+    <div class="modal-box wide">
+      <div class="modal-head">🗄 内蔵ファイルサーバ（TFTP / HTTP / FTP）</div>
+      <div class="modal-body">
+        <div class="row"><label>公開フォルダ</label>
+          <div class="keyrow" style="flex:1"><input id="fsRoot" type="text" placeholder="配布・受け取りに使うフォルダ" style="flex:1" /><button id="fsPick">参照</button><button id="fsOpen" title="フォルダを開く">📂</button></div>
+        </div>
+        <div class="row"><label>自PCのIP</label><div id="fsIps" class="fs-ips"></div></div>
+        <div class="row"><label>書込/受信</label><label class="chk"><input type="checkbox" id="fsWritable" checked /> アップロード（クライアント→このPC）を許可する</label></div>
+        <table class="fs-table">
+          <thead><tr><th>プロトコル</th><th>ポート</th><th>状態</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr data-proto="tftp"><td>TFTP <span class="muted">(UDP)</span></td><td><input class="fs-port" type="number" value="69" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+            <tr data-proto="http"><td>HTTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="8080" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+            <tr data-proto="ftp"><td>FTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="21" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+          </tbody>
+        </table>
+        <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+          例: Cisco から <code>copy tftp flash</code> / <code>copy running-config tftp</code> の宛先に上の「自PCのIP」を指定。<br>
+          HTTP はブラウザ/<code>copy http</code> で <code>http://&lt;IP&gt;:ポート/</code> を開くとファイル一覧。ポート69/21は管理者権限が必要な場合があります。
+        </span></div>
+        <pre id="fsLog" class="diag-out" style="height:150px"></pre>
+      </div>
+      <div class="modal-foot"><button id="fsClear">🗑 ログ消去</button><button id="fsClose" class="primary">閉じる</button></div>
+    </div>
+  </div>
+
+  <!-- ネットワークスキャン -->
+  <div id="scanModal" class="modal hidden">
+    <div class="modal-box wide">
+      <div class="modal-head">🔎 ネットワークスキャン</div>
+      <div class="modal-body">
+        <div class="row"><label>種別</label>
+          <select id="scanKind" style="flex:1">
+            <option value="ping">Ping Sweep（サブネット死活確認）</option>
+            <option value="port">ポートスキャン（TCP connect）</option>
+            <option value="arp">ARP テーブル（近傍ホスト）</option>
+            <option value="snmp">SNMP Walk（v2c）</option>
+          </select>
+        </div>
+        <div class="row scan-f scan-ping scan-port scan-snmp"><label id="scanTargetLbl">対象</label><input id="scanTarget" type="text" placeholder="192.168.10.0/24 / 192.168.10.1-50 / 192.168.10.5" style="flex:1" /></div>
+        <div class="row scan-f scan-port"><label>ポート</label><input id="scanPorts" type="text" placeholder="空＝主要ポート / 22,80,443 / 1-1024" style="flex:1" /></div>
+        <div class="row scan-f scan-snmp"><label>コミュニティ</label><input id="scanCommunity" type="text" value="public" style="flex:1" /></div>
+        <div class="row scan-f scan-snmp"><label>OID（基点）</label><input id="scanOid" type="text" value="1.3.6.1.2.1" placeholder="1.3.6.1.2.1.1 = system" style="flex:1" /></div>
+        <div class="row"><label>実行</label>
+          <div class="keyrow" style="flex:1;flex-wrap:wrap">
+            <button id="scanRun" class="primary">▶ 実行</button>
+            <button id="scanStop" disabled>⏹ 停止</button>
+            <button id="scanClear">🗑 クリア</button>
+            <span id="scanProg" class="mon-stat"></span>
+          </div>
+        </div>
+        <div class="scan-result"><table class="mon-table"><thead id="scanHead"></thead><tbody id="scanBody"></tbody></table></div>
+        <div class="row"><label></label><span class="muted" style="font-size:11px">結果の行を右クリック → そのIPでセッション作成。</span></div>
+      </div>
+      <div class="modal-foot"><button id="scanClose" class="primary">閉じる</button></div>
+    </div>
+  </div>
+
+  <!-- コンフィグ管理＆差分 -->
+  <div id="cfgModal" class="modal hidden">
+    <div class="modal-box wide">
+      <div class="modal-head">📑 コンフィグ管理（世代保存＆差分）</div>
+      <div class="modal-body">
+        <div class="row"><label>機器</label>
+          <div class="keyrow" style="flex:1"><select id="cfgKey" style="flex:1"></select><button id="cfgOpenDir" title="保存フォルダを開く">📂</button></div>
+        </div>
+        <div class="row"><label>取得コマンド</label><input id="cfgCmd" type="text" value="show running-config" placeholder="例: show running-config" style="flex:1" /></div>
+        <div class="row"><label>取得オプション</label>
+          <div class="keyrow" style="flex:1;flex-wrap:wrap">
+            <label class="chk" title="Ciscoでページ送りを無効化"><input type="checkbox" id="cfgTermLen" checked /> 先に terminal length 0</label>
+            <label class="chk" style="white-space:nowrap">無入力 <input id="cfgIdle" type="number" value="1500" min="400" max="20000" style="width:74px" /> ms で確定</label>
+            <button id="cfgCapture" class="primary">⏺ アクティブタブから取得</button>
+            <button id="cfgCaptureSync" title="同時入力グループの全タブから取得">⏺⏺ グループ一括</button>
+          </div>
+        </div>
+        <div class="cfg-cols">
+          <div class="cfg-list-wrap">
+            <div class="muted" style="font-size:11px;margin-bottom:3px">スナップショット（2件選ぶと差分）</div>
+            <ul id="cfgList" class="cfg-list"></ul>
+            <div class="keyrow" style="margin-top:4px;flex-wrap:wrap">
+              <button id="cfgView">表示</button>
+              <button id="cfgDiff" class="primary">差分</button>
+              <button id="cfgDel">削除</button>
+            </div>
+          </div>
+          <pre id="cfgView2" class="cfg-view"></pre>
+        </div>
+      </div>
+      <div class="modal-foot"><button id="cfgClose" class="primary">閉じる</button></div>
+    </div>
+  </div>
+
+  <!-- コマンドパレット -->
+  <div id="palette" class="palette hidden">
+    <div class="palette-box">
+      <input id="paletteInput" type="text" placeholder="コマンド・セッション・スニペット・履歴を検索…（↑↓ で選択、Enter で実行、Esc で閉じる）" />
+      <ul id="paletteList" class="palette-list"></ul>
+    </div>
+  </div>
+
   <script src="../../node_modules/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
   <script src="../../node_modules/xterm-addon-search/lib/xterm-addon-search.js"></script>
   <script src="../../node_modules/xterm-addon-web-links/lib/xterm-addon-web-links.js"></script>
   <script src="../ttl.js"></script>
+  <script src="features3.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

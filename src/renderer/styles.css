@@ -254,3 +254,50 @@ body #sidebar.collapsed + #sideResizer { display: none; }
 .toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(20px); background: var(--panel); color: var(--fg); border: 1px solid var(--accent); padding: 10px 18px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 400; opacity: 0; transition: opacity .25s, transform .25s; font-size: 13px; max-width: 70vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.err { border-color: var(--danger); color: var(--danger); }
+
+/* ========== 第3弾：サーバ / スキャン / コンフィグ / パレット ========== */
+.modal-box.wide { width: 760px; }
+
+/* 内蔵ファイルサーバ */
+.fs-ips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.ip-chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; padding: 2px 10px; font-family: Consolas, monospace; font-size: 12px; cursor: pointer; }
+.ip-chip:hover { border-color: var(--accent); color: var(--accent); }
+.fs-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.fs-table th, .fs-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.fs-table .fs-port { width: 90px; }
+.fs-state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.fs-state.on { color: var(--ok); font-weight: 600; }
+
+/* ネットワークスキャン */
+.scan-result { height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin: 6px 0; background: var(--bg3); }
+.scan-result .mon-table { font-size: 12px; }
+.scan-result .mon-table th, .scan-result .mon-table td { white-space: nowrap; }
+
+/* コンフィグ管理＆差分 */
+.cfg-cols { display: flex; gap: 10px; margin-top: 8px; }
+.cfg-list-wrap { width: 300px; flex: 0 0 auto; display: flex; flex-direction: column; }
+.cfg-list { list-style: none; margin: 0; padding: 0; height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3); }
+.cfg-list li { padding: 5px 9px; font-size: 12px; border-bottom: 1px solid var(--border); cursor: pointer; font-family: Consolas, monospace; }
+.cfg-list li.cfg-item:hover { background: var(--bg2); }
+.cfg-list li.sel { background: var(--accent); color: #11111b; font-weight: 600; }
+.cfg-view { flex: 1; height: 360px; overflow: auto; margin: 0; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; white-space: pre; color: var(--fg); }
+.cfg-view.diff { white-space: normal; }
+.cfg-view .diff-head { color: var(--accent); font-weight: 600; margin-bottom: 6px; position: sticky; top: 0; background: var(--bg3); padding-bottom: 4px; }
+.cfg-view .dl { white-space: pre-wrap; word-break: break-all; padding: 0 3px; border-radius: 2px; }
+.cfg-view .dl.add { background: rgba(166,227,161,0.16); color: var(--ok); }
+.cfg-view .dl.del { background: rgba(243,139,168,0.16); color: var(--danger); }
+.cfg-view .dl.same { color: var(--muted); }
+
+/* コマンドパレット */
+.palette { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: flex-start; justify-content: center; z-index: 500; }
+.palette-box { margin-top: 12vh; width: 620px; max-width: 90vw; background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; box-shadow: 0 16px 50px rgba(0,0,0,0.6); overflow: hidden; }
+#paletteInput { width: 100%; box-sizing: border-box; border: none; border-bottom: 1px solid var(--border); border-radius: 0; background: var(--bg3); color: var(--fg); padding: 13px 16px; font-size: 14px; outline: none; }
+.palette-list { list-style: none; margin: 0; padding: 4px; max-height: 52vh; overflow-y: auto; }
+.pal-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 6px; cursor: pointer; }
+.pal-item.sel { background: var(--accent); color: #11111b; }
+.pal-item.sel .pal-sub { color: #11111b; opacity: 0.75; }
+.pal-ic { width: 18px; text-align: center; flex: 0 0 auto; }
+.pal-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pal-label { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-empty { padding: 14px; text-align: center; }

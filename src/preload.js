@@ -122,6 +122,30 @@ contextBridge.exposeInMainWorld('api', {
   rdpPosition: (id, rect) => ipcRenderer.send('rdp:position', { id, rect }),
   rdpShow: (id, visible) => ipcRenderer.send('rdp:show', { id, visible }),
 
+  // 内蔵ファイルサーバ（TFTP / HTTP / FTP）
+  fsStart: (proto, conf) => ipcRenderer.invoke('fileserver:start', { proto, conf }),
+  fsStop: (proto) => ipcRenderer.invoke('fileserver:stop', { proto }),
+  fsStatus: () => ipcRenderer.invoke('fileserver:status'),
+  fsPickDir: () => ipcRenderer.invoke('fileserver:pickDir'),
+  fsOpenDir: (dir) => ipcRenderer.invoke('fileserver:openDir', { dir }),
+  onFsLog: (cb) => ipcRenderer.on('fileserver:log', (e, p) => cb(p)),
+  onFsStatus: (cb) => ipcRenderer.on('fileserver:status', (e, p) => cb(p)),
+
+  // 内蔵ネットワークツールキット（ping sweep / port scan / arp / snmp walk）
+  scanRun: (kind, params) => ipcRenderer.invoke('netscan:run', { kind, params }),
+  scanStop: () => ipcRenderer.send('netscan:stop'),
+  onScanResult: (cb) => ipcRenderer.on('netscan:result', (e, p) => cb(p)),
+  onScanProgress: (cb) => ipcRenderer.on('netscan:progress', (e, p) => cb(p)),
+  onScanEnd: (cb) => ipcRenderer.on('netscan:end', (e, p) => cb(p)),
+
+  // コンフィグ管理（世代保存＋差分）
+  configSave: (key, label, content) => ipcRenderer.invoke('config:save', { key, label, content }),
+  configListKeys: () => ipcRenderer.invoke('config:listKeys'),
+  configList: (key) => ipcRenderer.invoke('config:list', { key }),
+  configRead: (key, file) => ipcRenderer.invoke('config:read', { key, file }),
+  configDelete: (key, file) => ipcRenderer.invoke('config:delete', { key, file }),
+  configOpenDir: (key) => ipcRenderer.invoke('config:openDir', { key }),
+
   // ダイアログ等
   pickKey: () => ipcRenderer.invoke('dialog:pickKey'),
   exportSessions: (d) => ipcRenderer.invoke('dialog:exportSessions', d),

@@ -12,6 +12,8 @@ const winembed = require('./winembed');
 const dragchip = require('./dragchip');
 const transfer = require('./transfer');
 const pcap = require('./pcap');
+const fileserver = require('./fileserver');
+const netscan = require('./netscan');
 let autoUpdater = null;
 try { autoUpdater = require('electron-updater').autoUpdater; } catch (_) { autoUpdater = null; }
 const { Client } = require('ssh2');
@@ -698,6 +700,7 @@ function registerWindow(win) {
     windows.delete(win);
     const cp2 = captureProcs.get(wc.id); if (cp2) { try { cp2.kill(); } catch (_) {} captureProcs.delete(wc.id); }
     const dp = diagProcs.get(wc.id); if (dp) { try { dp.kill(); } catch (_) {} diagProcs.delete(wc.id); }
+    const sj = scanJobs.get(wc.id); if (sj) { try { sj(); } catch (_) {} scanJobs.delete(wc.id); }
     for (const [id, en] of conns) { if (en.wc === wc) closeConn(id); }
     if (win === mainWin) mainWin = null;
   });
@@ -1295,6 +1298,102 @@ ipcMain.handle('diag:run', (e, { kind, host, count }) => {
 ipcMain.on('diag:stop', (e) => { const c = diagProcs.get(e.sender.id); if (c) { try { c.kill(); } catch (_) {} diagProcs.delete(e.sender.id); } });
 
 // ---------------------------------------------------------------------------
+// 内蔵ファイルサーバ（TFTP / HTTP / FTP）。サーバはアプリ全体で共有のため、
+// ログ・状態は全ウィンドウへブロードキャストする。
+// ---------------------------------------------------------------------------
+fileserver.setLogger((entry) => broadcastAll('fileserver:log', entry));
+ipcMain.handle('fileserver:start', async (e, { proto, conf }) => {
+  const c = { ...(conf || {}) };
+  if (!c.root) return { ok: false, error: '公開フォルダを選択してください' };
+  try { if (!fs.existsSync(c.root) || !fs.statSync(c.root).isDirectory()) return { ok: false, error: '公開フォルダが存在しません' }; }
+  catch (_) { return { ok: false, error: '公開フォルダを確認できません' }; }
+  const ips = fileserver.localIps();
+  c.advertiseIp = c.advertiseIp || (ips[0] && ips[0].address) || '127.0.0.1';
+  const r = await fileserver.start(proto, c);
+  broadcastAll('fileserver:status', fileserver.status());
+  return r;
+});
+ipcMain.handle('fileserver:stop', (e, { proto }) => { fileserver.stop(proto); broadcastAll('fileserver:status', fileserver.status()); return { ok: true }; });
+ipcMain.handle('fileserver:status', () => ({ status: fileserver.status(), ips: fileserver.localIps() }));
+ipcMain.handle('fileserver:pickDir', async (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  const r = await dialog.showOpenDialog(w, { title: '公開フォルダを選択', properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths.length) return { ok: false };
+  return { ok: true, dir: r.filePaths[0] };
+});
+ipcMain.handle('fileserver:openDir', (e, { dir }) => { try { shell.openPath(dir); return { ok: true }; } catch (er) { return { ok: false, error: er.message }; } });
+
+// ---------------------------------------------------------------------------
+// 内蔵ネットワークツールキット（ping sweep / port scan / ARP / SNMP walk）
+// 実行はメイン側で行い、結果を逐次（webContents別）に通知する。
+// ---------------------------------------------------------------------------
+const scanJobs = new Map(); // webContents.id -> 現在実行中ジョブのキャンセル関数
+ipcMain.handle('netscan:run', (e, { kind, params }) => {
+  const wc = e.sender; const wcid = wc.id;
+  const prev = scanJobs.get(wcid); if (prev) { try { prev(); } catch (_) {} scanJobs.delete(wcid); }
+  const ctx = {
+    onResult: (row) => send(wc, 'netscan:result', { kind, row }),
+    onProgress: (p) => send(wc, 'netscan:progress', p),
+    onEnd: (summary) => { if (scanJobs.get(wcid) === cancel) scanJobs.delete(wcid); send(wc, 'netscan:end', { kind, summary }); },
+  };
+  let cancel = () => {};
+  try { cancel = netscan.run(kind, params || {}, ctx) || (() => {}); }
+  catch (er) { return { ok: false, error: er.message }; }
+  scanJobs.set(wcid, cancel);
+  return { ok: true };
+});
+ipcMain.on('netscan:stop', (e) => { const c = scanJobs.get(e.sender.id); if (c) { try { c(); } catch (_) {} scanJobs.delete(e.sender.id); } });
+
+// ---------------------------------------------------------------------------
+// コンフィグ管理（世代保存＋差分）。%APPDATA%\waterm\configs\<key>\<ts>.txt
+// key は機器ごとのフォルダ名（レンダラ側でセッション名/ホストから生成）。
+// ---------------------------------------------------------------------------
+const CONFIG_DIR = path.join(DATA_DIR, 'configs');
+function sanitizeKey(s) { return String(s || 'device').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\.+$/, '').slice(0, 80) || 'device'; }
+ipcMain.handle('config:save', (e, { key, label, content }) => {
+  try {
+    const dir = path.join(CONFIG_DIR, sanitizeKey(key));
+    fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date();
+    const pad = (n, w) => String(n).padStart(w || 2, '0');
+    const stamp = ts.getFullYear() + pad(ts.getMonth() + 1) + pad(ts.getDate()) + '-' + pad(ts.getHours()) + pad(ts.getMinutes()) + pad(ts.getSeconds());
+    const file = stamp + '.txt';
+    // 先頭にメタ行（# で始まるのでconfig本文と区別しやすい）。差分時はこの行を除外する。
+    const header = `# WaTerm config snapshot\n# device: ${key}\n# label: ${label || ''}\n# saved: ${ts.toLocaleString('ja-JP')}\n`;
+    fs.writeFileSync(path.join(dir, file), header + (content || ''), 'utf8');
+    return { ok: true, file, dir };
+  } catch (er) { return { ok: false, error: er.message }; }
+});
+ipcMain.handle('config:listKeys', () => {
+  try {
+    if (!fs.existsSync(CONFIG_DIR)) return { ok: true, keys: [] };
+    const keys = [];
+    for (const k of fs.readdirSync(CONFIG_DIR)) {
+      const d = path.join(CONFIG_DIR, k);
+      try { if (!fs.statSync(d).isDirectory()) continue; const files = fs.readdirSync(d).filter((f) => f.endsWith('.txt')); keys.push({ key: k, count: files.length }); } catch (_) {}
+    }
+    return { ok: true, keys };
+  } catch (er) { return { ok: false, error: er.message }; }
+});
+ipcMain.handle('config:list', (e, { key }) => {
+  try {
+    const dir = path.join(CONFIG_DIR, sanitizeKey(key));
+    if (!fs.existsSync(dir)) return { ok: true, snapshots: [] };
+    const snaps = fs.readdirSync(dir).filter((f) => f.endsWith('.txt')).map((f) => { const st = fs.statSync(path.join(dir, f)); return { file: f, size: st.size, mtime: st.mtimeMs }; }).sort((a, b) => b.file.localeCompare(a.file));
+    return { ok: true, snapshots: snaps };
+  } catch (er) { return { ok: false, error: er.message }; }
+});
+ipcMain.handle('config:read', (e, { key, file }) => {
+  try { const p = path.join(CONFIG_DIR, sanitizeKey(key), path.basename(file)); return { ok: true, content: fs.readFileSync(p, 'utf8') }; }
+  catch (er) { return { ok: false, error: er.message }; }
+});
+ipcMain.handle('config:delete', (e, { key, file }) => {
+  try { fs.unlinkSync(path.join(CONFIG_DIR, sanitizeKey(key), path.basename(file))); return { ok: true }; }
+  catch (er) { return { ok: false, error: er.message }; }
+});
+ipcMain.handle('config:openDir', (e, { key }) => { try { const d = key ? path.join(CONFIG_DIR, sanitizeKey(key)) : CONFIG_DIR; fs.mkdirSync(d, { recursive: true }); shell.openPath(d); return { ok: true }; } catch (er) { return { ok: false, error: er.message }; } });
+
+// ---------------------------------------------------------------------------
 // 埋め込みRDP(ネイティブ子ウィンドウ)をChromium描画面より前面に出すため、
 // GPU合成を無効化してHWND-z順を有効にする(これが無いとDirectCompositionの描画面が子窓を覆う)
 app.disableHardwareAcceleration();
@@ -1303,4 +1402,5 @@ app.commandLine.appendSwitch('disable-direct-composition');
 
 app.whenReady().then(() => { createWindow(); initUpdater(); setTimeout(setupUpdater, 3000); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { try { fileserver.stopAll(); } catch (_) {} });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

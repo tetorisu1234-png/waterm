@@ -352,6 +352,7 @@ function buildTermTab(id, session, status) {
   setActive(id);
   setTimeout(() => { try { fit.fit(); } catch (_) {} }, 30);
   term.onData((d) => {
+    recordCmdInput(id, d); // コマンドパレットの履歴用に入力行を蓄積
     // 同時入力グループ：このタブが同期ONなら、グループ内の全タブへ同じ入力を送る
     const self = tabs.get(id);
     if (self && self.syncOn) { for (const o of tabs.values()) { if (o.syncOn && !o.isRdp) api.connInput(o.id, d); } }
@@ -677,7 +678,7 @@ function closeTab(id) {
 
 /* ---------------- データ / ステータス受信 ---------------- */
 function wireData() {
-  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); t.term.write(applyHighlights(data, t)); } });
+  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); if (t.cfgCap) t.cfgCap.feed(data); t.term.write(applyHighlights(data, t)); } });
   api.onTransferDone(({ id }) => { const t = tabs.get(id); if (t) { t.xferActive = false; if (id === activeId) updateXferBtn(); } });
   api.onAdoptTab(adoptTab);
   api.onSftpEditEvent((p) => {
@@ -1412,6 +1413,7 @@ function wireUI() {
 
   document.querySelectorAll('.layoutsel .lay').forEach((b) => { b.onclick = () => setLayout(b.dataset.layout); });
   wireTabTools(); wireSftp(); wireMonitor(); wireLayout();
+  wireServer(); wireScan(); wireConfig(); wirePalette();
   window.addEventListener('resize', () => { refitAll(); updateEmbeds(); });
   window.addEventListener('move', updateEmbeds);
 }
