@@ -13,3 +13,8 @@ waterm-snippets*.json
 *.corrupt
 # ローカル開発用ヘルパー（マシン依存のキャッシュ参照）
 stamp-electron-version.ps1
+# 自己署名のコード署名証明書（秘密鍵はコミット禁止）
+build/*.pfx
+build/*.cer
+# 署名ビルドのヘルパー（証明書パスワードを含むためコミットしない）
+build/dist-signed.ps1

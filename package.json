@@ -51,7 +51,9 @@
       "!.git/**",
       "!Unblock-WaTerm.*",
       "!waterm-sessions*.json",
-      "!*.bak"
+      "!*.bak",
+      "!build/*.pfx",
+      "!build/*.cer"
     ],
     "win": {
       "target": [
