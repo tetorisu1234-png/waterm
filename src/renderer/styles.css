@@ -103,8 +103,8 @@ textarea { resize: vertical; min-height: 54px; width: 100%; }
   display: flex; align-items: center; gap: 7px; padding: 6px 11px;
   background: var(--bg2); border: 1px solid var(--border); border-bottom: none;
   border-radius: 7px 7px 0 0; cursor: pointer; white-space: nowrap; font-size: 12px;
-  /* 少ない時は最大180px、増えたら全タブが縮んで横並びのままウィンドウ内に収める */
-  flex: 0 1 180px; min-width: 0; overflow: hidden;
+  /* 少ない時は各タブが名前の全長に合わせて広がり省略なし。増えたら全タブが縮んで横並びのまま収まる(その時だけラベル省略) */
+  flex: 0 1 auto; min-width: 0; overflow: hidden;
 }
 .tab .tablabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab .dot, .tab .x { flex: 0 0 auto; }
