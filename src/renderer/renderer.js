@@ -21,6 +21,8 @@ let focused = 0;
 let editingSessionId = null;
 let editingSnip = -1;
 let isDetachedWindow = false; // ドラッグで切り離した（サイドバー非表示の）ウィンドウか
+let DRAGCHIP = false; // 切り離しドラッグのチップをWin32レイヤード窓で出せるか（ウィンドウ外表示可）
+let updateManual = false; // 「更新を確認」ボタンからの手動チェックか（最新/エラー時のみ通知するため）
 // 分離ウィンドウでタブが全て無くなったら自動で閉じる
 function maybeCloseEmptyWindow() { if (isDetachedWindow && tabs.size === 0) { try { api.closeSelf(); } catch (_) {} } }
 
@@ -41,7 +43,38 @@ async function init() {
   wireUI(); wireMenu(); wireData();
   renderMenuBar();
   applyLayoutSettings();
+  try { DRAGCHIP = !!(await api.dragChipAvailable()); } catch (_) { DRAGCHIP = false; }
   api.windowReady(); // 分離ウィンドウの場合は引き継ぎタブを受け取る
+}
+// 切り離しチップを canvas に描き、前乗算BGRA(物理px)で返す（Win32 UpdateLayeredWindow 用）
+function renderDragChip(name) {
+  const dpr = window.devicePixelRatio || 1;
+  const Wc = 280, Hc = 36;
+  const w = Math.round(Wc * dpr), h = Math.round(Hc * dpr);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.beginPath(); ctx.roundRect(0.5, 0.5, Wc - 1, Hc - 1, 7);
+  ctx.fillStyle = '#1e1e2e'; ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = '#89b4fa'; ctx.stroke();
+  ctx.fillStyle = '#a6e3a1'; ctx.beginPath(); ctx.arc(16, Hc / 2, 4, 0, Math.PI * 2); ctx.fill();
+  const hint = '↗ 新しいウィンドウ';
+  ctx.font = '11px "Segoe UI","Meiryo",sans-serif';
+  const hintW = ctx.measureText(hint).width;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#cdd6f4'; ctx.font = '600 12px "Segoe UI","Meiryo",sans-serif';
+  const nameMax = Wc - 12 - hintW - 10 - 28;
+  let nm = name || 'セッション';
+  if (ctx.measureText(nm).width > nameMax) { while (nm.length > 1 && ctx.measureText(nm + '…').width > nameMax) nm = nm.slice(0, -1); nm += '…'; }
+  ctx.textAlign = 'left'; ctx.fillText(nm, 28, Hc / 2 + 1);
+  ctx.fillStyle = '#89b4fa'; ctx.font = '11px "Segoe UI","Meiryo",sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText(hint, Wc - 12, Hc / 2 + 1);
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const out = new Uint8Array(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    const R = rgba[i * 4], G = rgba[i * 4 + 1], B = rgba[i * 4 + 2], A = rgba[i * 4 + 3];
+    out[i * 4] = (B * A / 255) | 0; out[i * 4 + 1] = (G * A / 255) | 0; out[i * 4 + 2] = (R * A / 255) | 0; out[i * 4 + 3] = A;
+  }
+  return { bgra: out, w, h };
 }
 
 /* ---------------- テーマ ---------------- */
@@ -434,15 +467,20 @@ function beginTabDrag(e, id, el, name) {
       el.classList.add('dragging');
     }
     if (inBand(ev.clientY)) {
-      if (tearing) { tearing = false; el.classList.remove('tearing'); hideTabGhost(); }
+      if (tearing) { tearing = false; el.classList.remove('tearing'); api.dragChipHide(); hideTabGhost(); }
       layoutReorder(ev.clientX - startX);
     } else {
-      if (!tearing) { tearing = true; el.classList.add('tearing'); }
+      if (!tearing) {
+        tearing = true; el.classList.add('tearing');
+        // DRAGCHIP可ならWin32レイヤード窓でウィンドウ外も表示。不可ならDOMゴースト(端クランプ)。
+        if (DRAGCHIP) { try { const c = renderDragChip(name); api.dragChipShow(c.bgra, c.w, c.h, ev.screenX, ev.screenY); } catch (_) { showTabGhost(ev.clientX, ev.clientY, name); } }
+      }
       clearShifts(); el.style.transform = '';
-      showTabGhost(ev.clientX, ev.clientY, name); // 端でクランプして画面外でも消さない
+      if (DRAGCHIP) api.dragChipMove(ev.screenX, ev.screenY);
+      else showTabGhost(ev.clientX, ev.clientY, name);
     }
   };
-  const finish = () => { clearShifts(); el.classList.remove('dragging', 'tearing'); document.body.classList.remove('tab-dragging'); hideTabGhost(); };
+  const finish = () => { clearShifts(); el.classList.remove('dragging', 'tearing'); document.body.classList.remove('tab-dragging'); api.dragChipHide(); hideTabGhost(); };
   const onUp = (ev) => {
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
@@ -644,8 +682,18 @@ function wireData() {
   api.onMonitorData(onMonitorData);
   api.onCapturePacket(onCapturePacket);
   api.onCaptureEnd(onCaptureEnd);
-  api.onUpdateAvailable((p) => toast('新しいバージョン ' + (p.version || '') + ' をダウンロード中…'));
-  api.onUpdateDownloaded((p) => { if (confirm('新しいバージョン ' + (p.version || '') + ' を準備しました。今すぐ再起動して更新しますか？')) api.updateInstall(); });
+  // 新版あり → アップグレードするか確認。OKならダウンロード→完了後に自動で再起動・更新。
+  api.onUpdateAvailable((p) => {
+    updateManual = false;
+    if (confirm('新しいバージョン v' + (p.version || '') + ' が公開されています。\n今すぐアップグレードしますか？\n\n[OK] ダウンロードして自動で再起動・更新します。')) {
+      toast('v' + (p.version || '') + ' をダウンロードしています…');
+      api.updateDownload();
+    }
+  });
+  api.onUpdateNone((p) => { if (updateManual) toast('お使いのバージョン (v' + (p.version || '') + ') が最新です'); updateManual = false; });
+  api.onUpdateProgress((p) => { const n = p && p.percent; if (n != null && (n % 20 < 2 || n >= 99)) toast('ダウンロード中… ' + n + '%'); });
+  api.onUpdateDownloaded((p) => toast('v' + (p.version || '') + ' を適用しています。まもなく再起動します…'));
+  api.onUpdateError(() => { if (updateManual) toast('更新の確認・取得に失敗しました（ネットワーク/配布先）', true); updateManual = false; });
   api.onStatus(({ id, status, message }) => {
     const t = tabs.get(id); if (!t) return;
     t.status = status; updateTabEl(t);
@@ -1487,13 +1535,17 @@ function runMenuAction(action) {
     case 'highlight': openHighlight(); break;
   }
 }
+// ヘルプ→更新を確認。新版あり→確認(イベントup-available)→OKで自動更新。なし/dev/エラーはトーストで通知。
 async function checkUpdate() {
+  updateManual = true;
+  toast('更新を確認しています…');
   const r = await api.updateCheck();
-  if (!r) return;
-  if (r.dev) { toast('開発モードのため更新確認はできません（インストール版で有効）'); return; }
-  if (!r.ok) { toast('更新を確認できませんでした（配布先URLが未設定の可能性）', true); return; }
-  if (r.available) toast('新しいバージョン ' + r.latest + ' を取得します…');
-  else toast('お使いのバージョン (' + r.current + ') は最新です');
+  // available / none / error の結果は update:* イベント側で処理（確認ダイアログ等）。
+  // dev・即時エラーだけここで通知。
+  if (!r) { updateManual = false; return; }
+  if (r.dev) { updateManual = false; toast('開発版のため自動更新は使えません。インストール版（WaTerm-Setup）でご利用ください', true); return; }
+  if (!r.ok) { updateManual = false; toast('更新を確認できませんでした（ネットワーク/配布先）', true); return; }
+  // r.ok のときは update:available または update:none が発火して処理される
 }
 function wireMenu() { api.onMenu(runMenuAction); }
 // タイトルバー内のカスタムメニューバー

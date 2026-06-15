@@ -11,3 +11,5 @@ waterm-settings*.json
 waterm-snippets*.json
 *.bak
 *.corrupt
+# ローカル開発用ヘルパー（マシン依存のキャッシュ参照）
+stamp-electron-version.ps1

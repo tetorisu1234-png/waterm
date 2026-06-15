@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, safeStorage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, safeStorage, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -9,6 +9,7 @@ const { spawn } = cp;
 // 古い暗号(レガシーDH)対応: ssh2 を require する前に crypto をパッチする
 const legacyDH = require('./legacy-dh');
 const winembed = require('./winembed');
+const dragchip = require('./dragchip');
 const transfer = require('./transfer');
 const pcap = require('./pcap');
 let autoUpdater = null;
@@ -1071,27 +1072,42 @@ ipcMain.handle('app:openExternal', (e, url) => shell.openExternal(url));
 // 自動更新（electron-updater）
 // ---------------------------------------------------------------------------
 function broadcastAll(channel, payload) { for (const w of windows) { try { if (!w.isDestroyed()) w.webContents.send(channel, payload); } catch (_) {} } }
-function setupUpdater() {
-  if (!autoUpdater || !app.isPackaged) return; // 開発実行(electron .)では無効
+// 更新イベントの配線（起動直後に1回。手動チェックより前に必ず登録しておく）
+let updaterReady = false;
+function initUpdater() {
+  if (!autoUpdater || !app.isPackaged || updaterReady) return; // 開発実行(electron .)では無効
   try {
     autoUpdater.logger = null; // 配布先未設定時のログノイズを抑制
-    autoUpdater.autoDownload = true;
+    autoUpdater.autoDownload = false;      // 「アップグレードしますか？」で OK されてからDLする
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('update-available', (info) => broadcastAll('update:available', { version: info && info.version }));
-    autoUpdater.on('update-downloaded', (info) => broadcastAll('update:downloaded', { version: info && info.version }));
-    autoUpdater.on('error', () => {}); // 配布先未設定/オフライン時は静かに無視
-    autoUpdater.checkForUpdates().catch(() => {});
+    autoUpdater.on('update-not-available', () => broadcastAll('update:none', { version: app.getVersion() }));
+    autoUpdater.on('download-progress', (p) => broadcastAll('update:progress', { percent: Math.round((p && p.percent) || 0) }));
+    autoUpdater.on('update-downloaded', (info) => {
+      broadcastAll('update:downloaded', { version: info && info.version });
+      // 利用者は「アップグレードしますか？」で既に同意済み → 自動で再起動して適用
+      setTimeout(() => { try { autoUpdater.quitAndInstall(); } catch (_) {} }, 1500);
+    });
+    autoUpdater.on('error', () => broadcastAll('update:error', {})); // 配布先未設定/オフライン時
+    updaterReady = true;
   } catch (_) {}
+}
+function setupUpdater() { // 起動少し後に最初の自動チェック
+  if (!autoUpdater || !app.isPackaged) return;
+  initUpdater();
+  try { autoUpdater.checkForUpdates().catch(() => {}); } catch (_) {}
 }
 ipcMain.handle('update:check', async () => {
   if (!autoUpdater) return { ok: false, error: 'updater 無効' };
-  if (!app.isPackaged) return { ok: false, dev: true };
+  if (!app.isPackaged) return { ok: false, dev: true }; // dev(electron .)では不可
+  initUpdater();
   try {
-    const r = await autoUpdater.checkForUpdates();
+    const r = await autoUpdater.checkForUpdates(); // 結果は update:available / update:none イベントで通知
     const latest = r && r.updateInfo ? r.updateInfo.version : null;
     return { ok: true, current: app.getVersion(), latest, available: !!(latest && latest !== app.getVersion()) };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+ipcMain.on('update:download', () => { try { if (autoUpdater) autoUpdater.downloadUpdate().catch(() => {}); } catch (_) {} });
 ipcMain.on('update:install', () => { try { if (autoUpdater) autoUpdater.quitAndInstall(); } catch (_) {} });
 
 // タブのドラッグ移動。レンダラはタブ列から外して離した時だけこれを呼ぶ。
@@ -1118,6 +1134,19 @@ ipcMain.handle('window:relocate', (e, { id, session, status, x, y }) => {
   createDetachedWindow({ id, session, status });
   return { ok: true, moved: true };
 });
+
+// タブ切り離しドラッグの追従チップ（Win32レイヤードウィンドウ＝DWM描画でHWアクセラ無効でも表示／ウィンドウ外・別モニタOK）
+// レンダラから前乗算BGRA(物理px)とDIP座標を受け取り、screen.dipToScreenPointで物理座標へ変換して配置。
+ipcMain.handle('dragchip:available', () => !!dragchip.isAvailable);
+function dipToPhys(x, y) { try { return screen.dipToScreenPoint({ x: Math.round(x), y: Math.round(y) }); } catch (_) { return { x: Math.round(x), y: Math.round(y) }; } }
+ipcMain.on('dragchip:show', (e, { bgra, w, h, x, y }) => {
+  if (!dragchip.isAvailable || !bgra || !w || !h) return;
+  const buf = Buffer.isBuffer(bgra) ? bgra : Buffer.from(bgra.buffer || bgra);
+  const p = dipToPhys(x, y);
+  dragchip.show(buf, w, h, p.x + 16, p.y + 18);
+});
+ipcMain.on('dragchip:move', (e, { x, y }) => { if (!dragchip.isAvailable) return; const p = dipToPhys(x, y); dragchip.move(p.x + 16, p.y + 18); });
+ipcMain.on('dragchip:hide', () => { if (dragchip.isAvailable) dragchip.hide(); });
 
 
 // 新ウィンドウのレンダラ準備完了 → 引き継ぎタブを送り、描画先(wc)を張り替える
@@ -1272,6 +1301,6 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-direct-composition');
 
-app.whenReady().then(() => { createWindow(); setTimeout(setupUpdater, 3000); });
+app.whenReady().then(() => { createWindow(); initUpdater(); setTimeout(setupUpdater, 3000); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('api', {
   windowReady: () => ipcRenderer.send('window:ready'),
   onAdoptTab: (cb) => ipcRenderer.on('tab:adopt', (e, p) => cb(p)),
   closeSelf: () => ipcRenderer.send('window:close'),
+  // タブ切り離しドラッグの追従チップ（Win32レイヤードウィンドウ＝ウィンドウ外でも表示）
+  dragChipAvailable: () => ipcRenderer.invoke('dragchip:available'),
+  dragChipShow: (bgra, w, h, x, y) => ipcRenderer.send('dragchip:show', { bgra, w, h, x, y }),
+  dragChipMove: (x, y) => ipcRenderer.send('dragchip:move', { x, y }),
+  dragChipHide: () => ipcRenderer.send('dragchip:hide'),
 
   // カスタムタイトルバー（フレームレス）
   winMinimize: () => ipcRenderer.send('win:minimize'),
@@ -80,9 +85,13 @@ contextBridge.exposeInMainWorld('api', {
 
   // 自動更新
   updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateDownload: () => ipcRenderer.send('update:download'),
   updateInstall: () => ipcRenderer.send('update:install'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (e, p) => cb(p)),
+  onUpdateNone: (cb) => ipcRenderer.on('update:none', (e, p) => cb(p)),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (e, p) => cb(p)),
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (e, p) => cb(p)),
+  onUpdateError: (cb) => ipcRenderer.on('update:error', (e, p) => cb(p)),
 
   // ファイル転送プロトコル (XMODEM/YMODEM)
   transferStart: (id, proto, dir) => ipcRenderer.invoke('transfer:start', { id, proto, dir }),
