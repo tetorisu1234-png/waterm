@@ -5,3 +5,9 @@ build/png/
 boot.err
 boot.out
 npm-debug.log*
+# セッション/設定の退避ファイル（パスワードを含むためコミット禁止）
+waterm-sessions*.json
+waterm-settings*.json
+waterm-snippets*.json
+*.bak
+*.corrupt
