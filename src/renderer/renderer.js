@@ -316,7 +316,12 @@ function buildTermTab(id, session, status) {
   addTabEl(tab);
   setActive(id);
   setTimeout(() => { try { fit.fit(); } catch (_) {} }, 30);
-  term.onData((d) => api.connInput(id, d));
+  term.onData((d) => {
+    // 同時入力グループ：このタブが同期ONなら、グループ内の全タブへ同じ入力を送る
+    const self = tabs.get(id);
+    if (self && self.syncOn) { for (const o of tabs.values()) { if (o.syncOn && !o.isRdp) api.connInput(o.id, d); } }
+    else api.connInput(id, d);
+  });
   term.onResize(({ cols, rows }) => api.connResize(id, cols, rows));
   return tab;
 }
@@ -504,6 +509,7 @@ function updateTabEl(tab) {
   else if (tab.status === 'error') tab.tabEl.classList.add('st-error');
   else if (tab.status === 'closed') tab.tabEl.classList.add('st-closed');
   if (tab.id === activeId) tab.tabEl.classList.add('active');
+  tab.tabEl.classList.toggle('sync', !!tab.syncOn);
 }
 function paneCount() { return PANE_COUNT[LAYOUT] || 1; }
 function setLayout(l) {
@@ -573,6 +579,7 @@ function renderLayout() {
     $('#btnSendFile').classList.toggle('hidden', !!at.isRdp);
     updateMacroBtn();
     updateXferBtn();
+    updateSyncBtn();
   } else setState('');
   setTimeout(() => { refitAll(); updateEmbeds(); }, 30);
   if (sftpVisible()) sftpRefresh();
@@ -622,6 +629,10 @@ function wireData() {
   api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); t.term.write(applyHighlights(data, t)); } });
   api.onTransferDone(({ id }) => { const t = tabs.get(id); if (t) { t.xferActive = false; if (id === activeId) updateXferBtn(); } });
   api.onAdoptTab(adoptTab);
+  api.onSftpEditEvent((p) => {
+    if (p && p.ok) { toast('⤴ 保存を検知：' + p.name + ' をアップロードしました'); if (sftpVisible()) $('#sftpStatus').textContent = '⤴ ' + p.name + ' を反映しました (' + new Date().toLocaleTimeString('ja-JP') + ')'; if (sftpVisible()) sftpRefresh(); }
+    else if (p) toast('アップロード失敗（' + p.name + '）: ' + (p.error || ''), true);
+  });
   api.onMonitorData(onMonitorData);
   api.onCapturePacket(onCapturePacket);
   api.onCaptureEnd(onCaptureEnd);
@@ -675,6 +686,7 @@ function wireTabTools() {
   $('#nlSel').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.newline = e.target.value; api.setNewline(activeId, e.target.value); } };
   $('#echoChk').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.localEcho = e.target.checked; api.setLocalEcho(activeId, e.target.checked); } };
   $('#btnFind').onclick = toggleFind;
+  $('#btnSync').onclick = (e) => { if (e.shiftKey) { syncAll(syncCount() === 0); } else toggleSync(); };
   $('#btnReconnect').onclick = () => { const t = tabs.get(activeId); if (!t) return; const s = t.session; closeTab(activeId); openSession(s); };
   $('#btnLog').onclick = async () => {
     const t = tabs.get(activeId); if (!t) return;
@@ -877,6 +889,34 @@ function stopTtl(tab) {
   tab.ttl.done = true; tab.ttlIo = null;
   if (tab.term) tab.term.writeln('\x1b[90m[TTL] 停止しました\x1b[0m');
   updateMacroBtn();
+}
+
+/* ---------------- 同時入力グループ (Sync Input) ---------------- */
+// グループに参加しているタブ数
+function syncCount() { let n = 0; for (const t of tabs.values()) if (t.syncOn) n++; return n; }
+// アクティブタブのグループ参加/離脱をトグル
+function toggleSync() {
+  const t = tabs.get(activeId); if (!t || t.isRdp) return;
+  t.syncOn = !t.syncOn;
+  updateTabEl(t); updateSyncBtn();
+  const n = syncCount();
+  if (t.syncOn) toast('⌨ このタブを同時入力グループに追加しました（' + n + 'タブ）。入力が全メンバーへ同時送信されます');
+  else toast('このタブを同時入力グループから外しました' + (n ? '（残り' + n + 'タブ）' : ''));
+}
+// 開いている全タブをまとめてグループへ追加/解除
+function syncAll(on) {
+  let n = 0; for (const t of tabs.values()) { if (t.isRdp) continue; t.syncOn = on; if (on) n++; updateTabEl(t); }
+  updateSyncBtn();
+  toast(on ? ('⌨ ' + n + 'タブを同時入力グループに追加しました') : '同時入力グループを解除しました');
+}
+function updateSyncBtn() {
+  const t = tabs.get(activeId);
+  const b = $('#btnSync'); if (!b) return;
+  const on = !!(t && t.syncOn); const n = syncCount();
+  b.classList.toggle('hidden', !!(t && t.isRdp));
+  b.classList.toggle('on', on);
+  b.textContent = (on || n) ? ('⌨ 同時入力 (' + n + ')') : '⌨ 同時入力';
+  b.title = on ? 'このタブはグループに参加中（クリックで解除）。Shift+クリックで全タブ一括' : '同時入力グループに追加（複数タブへ一括入力）。Shift+クリックで全タブ一括';
 }
 
 /* ---------------- ファイル転送 (XMODEM/YMODEM) ---------------- */
@@ -1102,6 +1142,7 @@ async function sftpRefresh() {
     tr.ondblclick = () => { if (it.isDir) { t.sftpCwd = full; sftpRefresh(); } else { api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }); } };
     tr.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(ev.clientX, ev.clientY, [
       it.isDir ? { label: '開く', fn: () => { t.sftpCwd = full; sftpRefresh(); } } : { label: 'ダウンロード', fn: () => api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }) },
+      ...(it.isDir ? [] : [{ label: '編集（ローカルで開く・保存で自動反映）', fn: () => sftpEditFile(full, it.name) }]),
       { label: 'リネーム', fn: async () => { const nn = await askText('新しい名前', { value: it.name }); if (nn) { const r = await api.sftpRename(activeId, full, t.sftpCwd.replace(/\/$/, '') + '/' + nn); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } } },
       { label: '削除', fn: async () => { if (confirm(it.name + ' を削除しますか？')) { const r = await api.sftpDelete(activeId, full, it.isDir); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } } },
     ]); };
@@ -1110,6 +1151,20 @@ async function sftpRefresh() {
   $('#sftpStatus').textContent = `${list.length} 項目 — ${t.sftpCwd}`;
 }
 function sftpUp() { const t = tabs.get(activeId); if (!t || !t.sftpCwd) return; const p = t.sftpCwd.replace(/\/+$/, ''); const parent = p.substring(0, p.lastIndexOf('/')) || '/'; t.sftpCwd = parent; sftpRefresh(); }
+// 即時編集：リモートファイルをローカルの既定エディタで開く（以後は保存するたび自動で再アップロード）
+async function sftpEditFile(remotePath, name) {
+  if (!activeId) return;
+  $('#sftpStatus').textContent = '「' + name + '」をローカルで開いています…';
+  const r = await api.sftpEdit(activeId, remotePath, name);
+  if (r && r.ok) {
+    $('#sftpStatus').textContent = '✎ 編集中: ' + name + '（ローカルで保存するたび自動でアップロードします）';
+    toast('✎ ' + name + ' をローカルエディタで開きました。保存すると自動で反映されます');
+    if (r.openError) toast('既定アプリで開けませんでした: ' + r.openError, true);
+  } else {
+    $('#sftpStatus').textContent = '編集を開始できません: ' + ((r && r.error) || '不明');
+    toast('編集を開始できません: ' + ((r && r.error) || '不明'), true);
+  }
+}
 function wireSftp() {
   $('#sftpUp').onclick = sftpUp;
   $('#sftpRefresh').onclick = sftpRefresh;
@@ -1368,6 +1423,9 @@ function runMenuAction(action) {
     case 'toggle-monitor': toggleMonitor(); break;
     case 'toggle-log-ts': SETTINGS.logTimestamp = !SETTINGS.logTimestamp; saveSettings(); toast('ログのタイムスタンプ: ' + (SETTINGS.logTimestamp ? 'ON（次回ログ開始から）' : 'OFF')); break;
     case 'broadcast': $('#bcastInput').focus(); break;
+    case 'sync-toggle': toggleSync(); break;
+    case 'sync-all-on': syncAll(true); break;
+    case 'sync-all-off': syncAll(false); break;
     case 'export': exportSessions(); break;
     case 'import': importSessions(); break;
     case 'log-start': $('#btnLog').click(); break;
@@ -1418,7 +1476,11 @@ const MENUS = [
     { sep: true },
     { label: 'ターミナルログを保存…', a: 'log-start' },
     { label: 'ログ保存を停止', a: 'log-stop' },
+    { sep: true },
     { label: '全タブへ送信(MultiExec)', a: 'broadcast' },
+    { label: '同時入力：このタブを切替', a: 'sync-toggle' },
+    { label: '同時入力：全タブを追加', a: 'sync-all-on' },
+    { label: '同時入力：全タブを解除', a: 'sync-all-off' },
   ] },
   { label: '表示', items: [
     { label: 'テーマ切替(ダーク/ライト)', a: 'toggle-theme' },

@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld('api', {
   sftpMkdir: (id, p) => ipcRenderer.invoke('sftp:mkdir', { id, p }),
   sftpDelete: (id, p, isDir) => ipcRenderer.invoke('sftp:delete', { id, p, isDir }),
   sftpRename: (id, oldP, newP) => ipcRenderer.invoke('sftp:rename', { id, oldP, newP }),
+  // 即時編集（ローカルエディタで開く→保存で自動再アップロード）
+  sftpEdit: (id, remotePath, name) => ipcRenderer.invoke('sftp:edit', { id, remotePath, name }),
+  sftpEditStop: (id) => ipcRenderer.send('sftp:editStop', { id }),
+  onSftpEditEvent: (cb) => ipcRenderer.on('sftp:editEvent', (e, p) => cb(p)),
 
   // シリアル(COM)
   serialList: () => ipcRenderer.invoke('serial:list'),

@@ -189,6 +189,7 @@ function closeConn(id) {
   try { if (entry.type === 'telnet' && entry.sock) entry.sock.destroy(); } catch (_) {}
   try { if (entry.type === 'serial' && entry.port) { entry.port.close(); } } catch (_) {}
   try { if (entry.type === 'rdp' && entry.proc) { entry.proc.kill(); } } catch (_) {}
+  try { (entry.editWatchers || []).forEach((p) => stopEditWatch(p)); } catch (_) {}
   conns.delete(id);
 }
 
@@ -962,6 +963,54 @@ ipcMain.handle('sftp:delete', async (e, { id, p, isDir }) => {
 ipcMain.handle('sftp:rename', async (e, { id, oldP, newP }) => {
   try { const sftp = await getSftp(id); await new Promise((res, rej) => sftp.rename(oldP, newP, (err) => err ? rej(err) : res())); return { ok: true }; }
   catch (er) { return { ok: false, error: er.message }; }
+});
+
+// SFTP 即時編集（edit-in-place）：リモートファイルを一時DLしてローカルの既定エディタで開き、
+// 保存（mtime変化）を検知して自動で再アップロードする。
+const editWatches = new Map(); // localPath -> { id, remotePath, name }
+function stopEditWatch(localPath) {
+  if (!editWatches.has(localPath)) return;
+  try { fs.unwatchFile(localPath); } catch (_) {}
+  editWatches.delete(localPath);
+}
+ipcMain.handle('sftp:edit', async (e, { id, remotePath, name }) => {
+  try {
+    const sftp = await getSftp(id);
+    const dir = path.join(os.tmpdir(), 'waterm-edit');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    // Windowsで不正な文字のみ除去（日本語等は保持）。一意化のため接頭辞を付与
+    const safe = String(name || 'file').replace(/[\\/:*?"<>|]/g, '_');
+    const localPath = path.join(dir, Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36) + '-' + safe);
+    await new Promise((res, rej) => sftp.fastGet(remotePath, localPath, (err) => err ? rej(err) : res()));
+    const entry = conns.get(id);
+    let busy = false, lastMtime = 0;
+    try { lastMtime = fs.statSync(localPath).mtimeMs; } catch (_) {}
+    const onChange = async (curr) => {
+      if (!curr || curr.mtimeMs === lastMtime) return; // 変化なし
+      lastMtime = curr.mtimeMs;
+      if (busy) return; busy = true;
+      try {
+        const s = await getSftp(id);
+        await new Promise((res, rej) => s.fastPut(localPath, remotePath, (err) => err ? rej(err) : res()));
+        send(wcOf(id, e.sender), 'sftp:editEvent', { ok: true, name, remotePath, ts: Date.now() });
+      } catch (er) {
+        send(wcOf(id, e.sender), 'sftp:editEvent', { ok: false, name, remotePath, error: er.message });
+      } finally { busy = false; }
+    };
+    // watchFile はパス監視のためエディタの「原子的保存(別名書込み+リネーム)」にも追従する
+    fs.watchFile(localPath, { interval: 800 }, onChange);
+    editWatches.set(localPath, { id, remotePath, name });
+    if (entry) (entry.editWatchers = entry.editWatchers || []).push(localPath);
+    const opened = await shell.openPath(localPath); // 既定アプリで開く（空文字なら成功）
+    return { ok: true, localPath, openError: opened || '' };
+  } catch (er) { return { ok: false, error: er.message }; }
+});
+// 編集監視の停止（タブ側から個別に解除する場合）
+ipcMain.on('sftp:editStop', (e, { id }) => {
+  const entry = conns.get(id);
+  if (!entry || !entry.editWatchers) return;
+  for (const p of entry.editWatchers) stopEditWatch(p);
+  entry.editWatchers = [];
 });
 
 // ダイアログ

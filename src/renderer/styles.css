@@ -118,6 +118,10 @@ body.tab-dragging { cursor: grabbing; }
 .tab.st-error .dot, .tab.st-closed .dot { background: var(--danger); }
 .tab .x { color: var(--muted); padding: 0 2px; border-radius: 3px; }
 .tab .x:hover { background: var(--danger); color: #fff; }
+/* 同時入力グループに参加中のタブ：上端をアクセント色で帯表示＋⌨マーク */
+.tab.sync { border-color: var(--warn); box-shadow: inset 0 2px 0 var(--warn); }
+.tab.sync::before { content: '⌨'; font-size: 11px; color: var(--warn); margin-right: -2px; }
+#btnSync.on { background: var(--warn); color: #1e1e2e; border-color: var(--warn); font-weight: 600; }
 
 #tabtools {
   display: flex; align-items: center; gap: 14px; padding: 5px 10px;
