@@ -415,7 +415,7 @@ const TAB_TEAR_TOLERANCE = 44;
 function addTabEl(tab) {
   const t = elx('div', 'tab'); t.dataset.id = tab.id;
   const dot = elx('span', 'dot');
-  const lbl = elx('span', null, tab.session.name);
+  const lbl = elx('span', 'tablabel', tab.session.name);
   const x = elx('span', 'x', '✕');
   x.onclick = (e) => { e.stopPropagation(); closeTab(tab.id); };
   t.appendChild(dot); t.appendChild(lbl); t.appendChild(x);
@@ -442,7 +442,14 @@ function beginTabDrag(e, id, el, name) {
   };
   const clearShifts = () => { if (snap) snap.forEach((s) => { s.el.style.transform = ''; }); };
   // ドラッグ中のタブは半透明でカーソル追従、他タブは隙間を空けるようスライド
-  const layoutReorder = (dx) => {
+  const layoutReorder = (dxRaw) => {
+    // ドラッグ中のタブを #tabbar の内側にクランプ（左右の壁を貫通させない）
+    const tbr = tb.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const origLeft = startCenter - w / 2;
+    const minDx = (tbr.left + 6) - origLeft;        // 左パディング(6px)分内側まで
+    const maxDx = (tbr.right - 6 - w) - origLeft;   // 右端 - パディング - タブ幅
+    const dx = (maxDx < minDx) ? dxRaw : Math.max(minDx, Math.min(dxRaw, maxDx));
     const dc = startCenter + dx;
     let target = di;
     for (let j = 0; j < snap.length; j++) {
