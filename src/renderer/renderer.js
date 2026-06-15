@@ -968,9 +968,10 @@ async function runDiag(kind) {
   SETTINGS.diagCount = count; saveSettings();
   const label = kind === 'ping' ? 'ping' : kind === 'tracert' ? 'tracert' : 'nslookup';
   diagAppend((($('#diagOut').textContent) ? '\n' : '') + '$ ' + label + ' ' + host + '\n');
+  // 先に実行中フラグを立てる（短時間で終わる nslookup 等で diag:end が先着しても矛盾しないように）
+  diagRunning = true; updateDiagButtons();
   const r = await api.diagRun(kind, host, count);
-  if (r && r.ok) { diagRunning = true; updateDiagButtons(); }
-  else { diagAppend('[エラー] ' + ((r && r.error) || '実行できませんでした') + '\n'); }
+  if (!(r && r.ok)) { diagRunning = false; updateDiagButtons(); diagAppend('[エラー] ' + ((r && r.error) || '実行できませんでした') + '\n'); }
 }
 
 /* 検索 */
