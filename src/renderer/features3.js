@@ -180,20 +180,44 @@ function ConfigCapture(tab, opts) {
   this.tab = tab; this.cmd = opts.cmd; this.termLen = opts.termLen; this.idleMs = opts.idleMs; this.onDone = opts.onDone;
   this.buf = ''; this.capturing = false; this.done = false; this.timer = null; this.hardTimer = null;
 }
+// xterm バッファからカーソル付近の最終非空行（＝現在のプロンプト）を読む。
+// 送信せずに現在のモードを判定するために使う。
+function currentPromptLine(tab) {
+  try {
+    if (!tab || !tab.term) return '';
+    const b = tab.term.buffer.active;
+    const bottom = b.baseY + b.cursorY;
+    for (let y = bottom; y >= Math.max(0, bottom - 4); y--) {
+      const l = b.getLine(y); if (!l) continue;
+      const s = l.translateToString(true);
+      if (s && s.trim()) return s;
+    }
+  } catch (_) {}
+  return '';
+}
 ConfigCapture.prototype.start = function () {
   const self = this;
-  // Cisco向け事前処理（termLen=ON時）。設定モード等にいても特権EXECへ戻してから
-  // ページャ無効化する。end は interface/line 等どの設定サブモードからでも特権EXECに戻る。
-  // 特権EXECで end を打っても無害なエラー1行が出るだけで、取得開始前なので保存内容には混入しない。
+  // Cisco向け事前処理（termLen=ON時）。
+  // ⚠️特権EXEC(#)で `end` を打つと IOS が未知コマンド＝ホスト名と解釈して telnet を試み
+  //   「% Bad IP address or host name」エラーになる。そこで現在のプロンプトを読み、
+  //   設定モード「(config…)#」にいる時だけ `end` を送って特権EXECへ戻す。
+  let preDelay = 60;
   if (this.termLen) {
-    api.connInput(this.tab.id, 'end\r');
-    setTimeout(() => api.connInput(self.tab.id, 'terminal length 0\r'), 300);
+    const inConfig = /\(config[^)]*\)\s*#/.test(currentPromptLine(this.tab));
+    if (inConfig) {
+      api.connInput(this.tab.id, 'end\r');
+      setTimeout(() => api.connInput(self.tab.id, 'terminal length 0\r'), 300);
+      preDelay = 900;
+    } else {
+      api.connInput(this.tab.id, 'terminal length 0\r');
+      preDelay = 500;
+    }
   }
   setTimeout(() => {
     self.capturing = true; self.buf = '';
     api.connInput(self.tab.id, self.cmd + '\r');
     self.arm();
-  }, this.termLen ? 900 : 60);
+  }, preDelay);
   this.hardTimer = setTimeout(() => self.finish(), 30000); // 取りこぼし防止の上限
 };
 ConfigCapture.prototype.feed = function (data) { if (!this.capturing) return; this.buf += data; this.arm(); };
