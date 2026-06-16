@@ -442,7 +442,7 @@ sendln "show version"'></textarea></div>
         <div class="row"><label>取得コマンド</label><input id="cfgCmd" type="text" value="show running-config" placeholder="例: show running-config" style="flex:1" /></div>
         <div class="row"><label>取得オプション</label>
           <div class="keyrow" style="flex:1;flex-wrap:wrap">
-            <label class="chk" title="Ciscoでページ送りを無効化"><input type="checkbox" id="cfgTermLen" checked /> 先に terminal length 0</label>
+            <label class="chk" title="Cisco向け：取得前に end で特権EXECへ戻し、terminal length 0 でページ送りを無効化（設定モードからでも取得可）"><input type="checkbox" id="cfgTermLen" checked /> 先に end + terminal length 0（Cisco）</label>
             <label class="chk" style="white-space:nowrap">無入力 <input id="cfgIdle" type="number" value="1500" min="400" max="20000" style="width:74px" /> ms で確定</label>
             <button id="cfgCapture" class="primary">⏺ アクティブタブから取得</button>
             <button id="cfgCaptureSync" title="同時入力グループの全タブから取得">⏺⏺ グループ一括</button>

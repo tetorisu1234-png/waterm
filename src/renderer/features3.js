@@ -182,12 +182,18 @@ function ConfigCapture(tab, opts) {
 }
 ConfigCapture.prototype.start = function () {
   const self = this;
-  if (this.termLen) api.connInput(this.tab.id, 'terminal length 0\r');
+  // Cisco向け事前処理（termLen=ON時）。設定モード等にいても特権EXECへ戻してから
+  // ページャ無効化する。end は interface/line 等どの設定サブモードからでも特権EXECに戻る。
+  // 特権EXECで end を打っても無害なエラー1行が出るだけで、取得開始前なので保存内容には混入しない。
+  if (this.termLen) {
+    api.connInput(this.tab.id, 'end\r');
+    setTimeout(() => api.connInput(self.tab.id, 'terminal length 0\r'), 300);
+  }
   setTimeout(() => {
     self.capturing = true; self.buf = '';
     api.connInput(self.tab.id, self.cmd + '\r');
     self.arm();
-  }, this.termLen ? 600 : 60);
+  }, this.termLen ? 900 : 60);
   this.hardTimer = setTimeout(() => self.finish(), 30000); // 取りこぼし防止の上限
 };
 ConfigCapture.prototype.feed = function (data) { if (!this.capturing) return; this.buf += data; this.arm(); };
