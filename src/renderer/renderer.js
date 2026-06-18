@@ -23,6 +23,7 @@ let editingSnip = -1;
 let isDetachedWindow = false; // ドラッグで切り離した（サイドバー非表示の）ウィンドウか
 let DRAGCHIP = false; // 切り離しドラッグのチップをWin32レイヤード窓で出せるか（ウィンドウ外表示可）
 let updateManual = false; // 「更新を確認」ボタンからの手動チェックか（最新/エラー時のみ通知するため）
+let ACTIVE_PERF = true; // 実際に起動している描画モード（main側の起動時設定。menuのSETTINGS.perfModeとは別＝再起動で反映）
 // 分離ウィンドウでタブが全て無くなったら自動で閉じる
 function maybeCloseEmptyWindow() { if (isDetachedWindow && tabs.size === 0) { try { api.closeSelf(); } catch (_) {} } }
 
@@ -44,6 +45,8 @@ async function init() {
   renderMenuBar();
   applyLayoutSettings();
   try { DRAGCHIP = !!(await api.dragChipAvailable()); } catch (_) { DRAGCHIP = false; }
+  try { ACTIVE_PERF = !!(await api.getPerfMode()); } catch (_) { ACTIVE_PERF = false; }
+  if (SETTINGS.perfMode === undefined) SETTINGS.perfMode = true; // 既定ON
   api.windowReady(); // 分離ウィンドウの場合は引き継ぎタブを受け取る
 }
 // 切り離しチップを canvas に描き、前乗算BGRA(物理px)で返す（Win32 UpdateLayeredWindow 用）
@@ -336,6 +339,18 @@ async function buildCfg(s, cols, rows) {
   return cfg;
 }
 // ターミナルタブ(xterm + ラッパ + 配線)を生成する共通処理
+// 端末の描画レンダラを読み込む。WebGL(高速モード)→失敗ならCanvas→それも無ければ標準(DOM)。
+function loadFastRenderer(term) {
+  if (ACTIVE_PERF && typeof WebglAddon !== 'undefined') {
+    try {
+      const w = new WebglAddon.WebglAddon();
+      w.onContextLoss(() => { try { w.dispose(); } catch (_) {} try { if (typeof CanvasAddon !== 'undefined') term.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) {} });
+      term.loadAddon(w);
+      return;
+    } catch (_) { /* WebGL不可 → Canvasへ */ }
+  }
+  try { if (typeof CanvasAddon !== 'undefined') term.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) {}
+}
 function buildTermTab(id, session, status) {
   const wrap = elx('div', 'term-wrap'); $('#termpool').appendChild(wrap);
   const term = new Terminal({ fontSize: SETTINGS.fontSize, fontFamily: 'Consolas, "Cascadia Mono", "MS Gothic", monospace', cursorBlink: true, scrollback: 8000, theme: xtermTheme(), allowProposedApi: true });
@@ -343,6 +358,8 @@ function buildTermTab(id, session, status) {
   const search = new SearchAddon.SearchAddon(); term.loadAddon(search);
   try { term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => api.openExternal(uri))); } catch (_) {}
   term.open(wrap);
+  // レンダラ高速化: 高速モードはWebGL(GPU)、通常モードはCanvas(ソフトだがDOMより速い)。失敗時はCanvas→DOMへフォールバック。
+  loadFastRenderer(term);
   // 右クリックで貼り付け、範囲選択で自動コピー(PuTTY/MobaXterm方式)
   wrap.addEventListener('contextmenu', async (e) => { e.preventDefault(); const txt = await api.clipboardRead(); if (txt) term.paste(txt); }, true);
   term.onSelectionChange(() => { const sel = term.getSelection(); if (sel) api.clipboardWrite(sel); });
@@ -1542,7 +1559,18 @@ function runMenuAction(action) {
     case 'about': api.appAbout(); break;
     case 'check-update': checkUpdate(); break;
     case 'highlight': openHighlight(); break;
+    case 'toggle-perf': togglePerfMode(); break;
   }
+}
+// 高速描画モードの切替（settings.jsonに保存。HWアクセラ設定は起動時固定のため再起動で反映）
+function togglePerfMode() {
+  const next = !(SETTINGS.perfMode !== false);
+  SETTINGS.perfMode = next; saveSettings();
+  const msg = next
+    ? '高速描画モードを ON にしました（GPU/WebGL）。RDPは外部mstscで開きます。\n再起動後に有効になります。'
+    : '高速描画モードを OFF にしました（RDPウィンドウ内埋め込み・描画はソフトウェア）。\n再起動後に有効になります。';
+  toast(next ? '高速描画モード: ON（要再起動）' : '高速描画モード: OFF（要再起動）');
+  setTimeout(() => alert(msg), 50);
 }
 // ヘルプ→更新を確認。新版あり→確認(イベントup-available)→OKで自動更新。なし/dev/エラーはトーストで通知。
 async function checkUpdate() {
@@ -1595,6 +1623,7 @@ const MENUS = [
     { label: 'SFTPパネル表示切替', a: 'toggle-sftp' },
     { label: '通信モニタ表示切替', a: 'toggle-monitor' },
     { label: '出力ハイライト設定…', a: 'highlight' },
+    { label: '高速描画モード 切替（GPU/WebGL・要再起動）', a: 'toggle-perf' },
     { label: 'ログにタイムスタンプを付ける(切替)', a: 'toggle-log-ts' },
     { sep: true },
     { label: '開発者ツール', a: 'devtools' },

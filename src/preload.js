@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
   winDevtools: () => ipcRenderer.send('win:devtools'),
   appAbout: () => ipcRenderer.send('app:about'),
   appQuit: () => ipcRenderer.send('app:quit'),
+  getPerfMode: () => ipcRenderer.invoke('app:perfMode'),
 
   // 自動更新
   updateCheck: () => ipcRenderer.invoke('update:check'),

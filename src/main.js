@@ -346,6 +346,8 @@ function rdpLaunch(cfg) {
 function rdpEmbed(wc, id, cfg) {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') { resolve({ ok: false, error: 'RDPはWindowsでのみ利用できます' }); return; }
+    // 高速モードはGPU合成が有効で埋め込み(子HWND)が見えないため、外部mstscで開く
+    if (PERF_MODE) { rdpLaunch(cfg).then((r) => resolve(Object.assign({ embedded: false }, r))); return; }
     const reqWin = BrowserWindow.fromWebContents(wc) || mainWin; // 要求元ウィンドウに埋め込む（分離ウィンドウ対応）
     if (!winembed.isAvailable || !reqWin) { rdpLaunch(cfg).then((r) => resolve(Object.assign({ embedded: false }, r))); return; }
     let file;
@@ -1394,11 +1396,22 @@ ipcMain.handle('config:delete', (e, { key, file }) => {
 ipcMain.handle('config:openDir', (e, { key }) => { try { const d = key ? path.join(CONFIG_DIR, sanitizeKey(key)) : CONFIG_DIR; fs.mkdirSync(d, { recursive: true }); shell.openPath(d); return { ok: true }; } catch (er) { return { ok: false, error: er.message }; } });
 
 // ---------------------------------------------------------------------------
-// 埋め込みRDP(ネイティブ子ウィンドウ)をChromium描画面より前面に出すため、
-// GPU合成を無効化してHWND-z順を有効にする(これが無いとDirectCompositionの描画面が子窓を覆う)
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu-compositing');
-app.commandLine.appendSwitch('disable-direct-composition');
+// 描画モード（起動時にsettings.jsonから読む。切替には再起動が必要）
+//   高速モード(perfMode, 既定ON): GPUアクセラ有効＋WebGLレンダラでネイティブ級に軽い。
+//     代わりにRDP埋め込み不可（GPU合成が子HWNDを覆う）→外部mstscへ自動フォールバック。
+//     一部環境(このPC等)のGPUプロセス サンドボックスACCESS_DENIEDクラッシュ回避に
+//     disable-gpu-sandbox を併用（描画/動作に無害）。
+//   通常モード(perfMode=false): HWアクセラ無効化でRDPをウィンドウ内に埋め込み可（描画はソフトウェア）。
+let PERF_MODE = true;
+try { const s = JSON.parse(fs.readFileSync(SET_FILE, 'utf8')); if (s && typeof s.perfMode === 'boolean') PERF_MODE = s.perfMode; } catch (_) {}
+if (PERF_MODE) {
+  app.commandLine.appendSwitch('disable-gpu-sandbox'); // GPUサンドボックス起因のクラッシュ回避（環境依存）
+} else {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-direct-composition');
+}
+ipcMain.handle('app:perfMode', () => PERF_MODE);
 
 app.whenReady().then(() => { createWindow(); initUpdater(); setTimeout(setupUpdater, 3000); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
