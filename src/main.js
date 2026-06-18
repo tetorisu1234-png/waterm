@@ -518,6 +518,7 @@ function sshConnect(wc, id, cfg) {
       const client = new Client();
       entry.client = client;
       client.on('ready', () => {
+        try { client.setNoDelay(true); } catch (_) {} // TCP_NODELAY: Nagle無効化で打鍵の遅延(最大40ms)を解消（Tera Term同様）
         setupForwards(client, entry, cfg, wc, id);
         client.shell({ term: cfg.termType || 'xterm-256color', cols: cfg.cols || 80, rows: cfg.rows || 24 }, (err, stream) => {
           if (err) { send(wc, 'conn:status', { id, status: 'error', message: err.message }); done({ ok: false, error: err.message }); return; }
@@ -593,7 +594,7 @@ function connectJump(jump, onReady, onErr) {
   let jkey = null;
   if (jump.authType === 'key' && jump.keyPath) { try { jkey = fs.readFileSync(jump.keyPath); } catch (e) { onErr('踏み台の秘密鍵を読めません: ' + e.message); return; } }
   const jalgos = jump.legacy ? JSON.parse(JSON.stringify(LEGACY_ALGOS)) : null;
-  jc.on('ready', () => onReady(jc));
+  jc.on('ready', () => { try { jc.setNoDelay(true); } catch (_) {} onReady(jc); });
   jc.on('error', (e) => onErr(e.message));
   jc.on('keyboard-interactive', (n, i, l, p, cb) => cb(p.map(() => jump.password || '')));
   const jcfg = { host: jump.host, port: jump.port || 22, username: jump.username, readyTimeout: 20000, tryKeyboard: true };
@@ -612,6 +613,7 @@ function telnetConnect(wc, id, cfg) {
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     const sock = new net.Socket();
+    try { sock.setNoDelay(true); } catch (_) {} // TCP_NODELAY: Nagle無効化で打鍵遅延を解消
     const entry = {
       type: 'telnet', sock, enc: cfg.encoding || 'utf8',
       newline: cfg.newline || 'crlf', localEcho: !!cfg.localEcho, logStream: null,

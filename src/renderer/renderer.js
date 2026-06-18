@@ -1169,7 +1169,10 @@ function parseHighlightRules(text) {
     let color = notify ? 'red' : 'yellow';
     const m = line.match(/^(.*?)\s*=\s*(yellow|red|green|cyan|magenta|blue)$/i);
     if (m) { line = m[1].trim(); color = m[2].toLowerCase(); }
-    if (line) out.push({ kw: line, notify, ansi: HL_COLORS[color] || HL_COLORS.yellow });
+    if (line) {
+      let re = null; try { re = new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); } catch (_) {}
+      out.push({ kw: line, notify, ansi: HL_COLORS[color] || HL_COLORS.yellow, re });
+    }
   }
   return out;
 }
@@ -1177,9 +1180,9 @@ function applyHighlights(data, t) {
   if (!HL_RULES.length || !data) return data;
   let out = data;
   for (const r of HL_RULES) {
-    let re; try { re = new RegExp(r.kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); } catch (_) { continue; }
+    if (!r.re) continue; // 正規表現は parseHighlightRules で事前コンパイル済み（チャンク毎の再コンパイルを回避）
     const before = out;
-    out = out.replace(re, (mm) => r.ansi + mm + '\x1b[0m');
+    out = out.replace(r.re, (mm) => r.ansi + mm + '\x1b[0m');
     if (out !== before && r.notify) notifyMatch(t, r.kw);
   }
   return out;

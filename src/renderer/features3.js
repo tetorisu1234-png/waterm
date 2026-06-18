@@ -379,13 +379,16 @@ function recordCmdInput(id, d) {
   }
   cmdLineBuf.set(id, buf);
 }
+let _cmdHistSaveTimer = null;
 function commitCmd(line) {
   const cmd = (line || '').trim();
   if (cmd.length < 1 || cmd.length > 400) return;
   const i = CMD_HISTORY.indexOf(cmd); if (i >= 0) CMD_HISTORY.splice(i, 1);
   CMD_HISTORY.unshift(cmd);
   if (CMD_HISTORY.length > 300) CMD_HISTORY.length = 300;
-  SETTINGS.cmdHistory = CMD_HISTORY.slice(0, 200); saveSettings();
+  // 保存はデバウンス（Enter毎のsettings.json書き込みを避ける。履歴はメモリ上で常に最新）
+  clearTimeout(_cmdHistSaveTimer);
+  _cmdHistSaveTimer = setTimeout(() => { SETTINGS.cmdHistory = CMD_HISTORY.slice(0, 200); saveSettings(); }, 4000);
 }
 function wirePalette() {
   $('#btnPalette').onclick = togglePalette;
