@@ -23,6 +23,7 @@ let editingSnip = -1;
 let isDetachedWindow = false; // ドラッグで切り離した（サイドバー非表示の）ウィンドウか
 let DRAGCHIP = false; // 切り離しドラッグのチップをWin32レイヤード窓で出せるか（ウィンドウ外表示可）
 let updateManual = false; // 「更新を確認」ボタンからの手動チェックか（最新/エラー時のみ通知するため）
+let updState = 'idle';    // アップデートダイアログの状態: idle / prompt / downloading / applying
 let ACTIVE_PERF = true; // 実際に起動している描画モード（main側の起動時設定。menuのSETTINGS.perfModeとは別＝再起動で反映）
 // 分離ウィンドウでタブが全て無くなったら自動で閉じる
 function maybeCloseEmptyWindow() { if (isDetachedWindow && tabs.size === 0) { try { api.closeSelf(); } catch (_) {} } }
@@ -707,18 +708,12 @@ function wireData() {
   api.onMonitorData(onMonitorData);
   api.onCapturePacket(onCapturePacket);
   api.onCaptureEnd(onCaptureEnd);
-  // 新版あり → アップグレードするか確認。OKならダウンロード→完了後に自動で再起動・更新。
-  api.onUpdateAvailable((p) => {
-    updateManual = false;
-    if (confirm('新しいバージョン v' + (p.version || '') + ' が公開されています。\n今すぐアップグレードしますか？\n\n[OK] ダウンロードして自動で再起動・更新します。')) {
-      toast('v' + (p.version || '') + ' をダウンロードしています…');
-      api.updateDownload();
-    }
-  });
+  // 新版あり → アプリ内ダイアログで確認。更新する→DLプログレスバー→完了で適用中表示→自動再起動。
+  api.onUpdateAvailable((p) => { updateManual = false; showUpdatePrompt(p.version); });
   api.onUpdateNone((p) => { if (updateManual) toast('お使いのバージョン (v' + (p.version || '') + ') が最新です'); updateManual = false; });
-  api.onUpdateProgress((p) => { const n = p && p.percent; if (n != null && (n % 20 < 2 || n >= 99)) toast('ダウンロード中… ' + n + '%'); });
-  api.onUpdateDownloaded((p) => toast('v' + (p.version || '') + ' を適用しています。まもなく再起動します…'));
-  api.onUpdateError(() => { if (updateManual) toast('更新の確認・取得に失敗しました（ネットワーク/配布先）', true); updateManual = false; });
+  api.onUpdateProgress((p) => setUpdateProgress(p && p.percent));
+  api.onUpdateDownloaded((p) => showUpdateApplying(p.version));
+  api.onUpdateError(() => { if (updateManual) toast('更新の確認・取得に失敗しました（ネットワーク/配布先）', true); updateManual = false; if (updState !== 'applying') hideUpdateModal(); });
   api.onStatus(({ id, status, message }) => {
     const t = tabs.get(id); if (!t) return;
     t.status = status; updateTabEl(t);
@@ -1423,6 +1418,9 @@ function wireUI() {
   $('#diagClose').onclick = () => { api.diagStop(); $('#diagModal').classList.add('hidden'); };
   $('#diagHost').onkeydown = (e) => { if (e.key === 'Enter') runDiag('ping'); };
 
+  $('#updNow').onclick = startUpdateDownload;
+  $('#updLater').onclick = hideUpdateModal;
+
   $('#bcastBtn').onclick = broadcast;
   $('#bcastInput').onkeydown = (e) => { if (e.key === 'Enter') broadcast(); };
 
@@ -1586,6 +1584,39 @@ async function checkUpdate() {
   if (r.dev) { updateManual = false; toast('開発版のため自動更新は使えません。インストール版（WaTerm-Setup）でご利用ください', true); return; }
   if (!r.ok) { updateManual = false; toast('更新を確認できませんでした（ネットワーク/配布先）', true); return; }
   // r.ok のときは update:available または update:none が発火して処理される
+}
+/* ---------------- アップデートUI（プログレスバー付き） ---------------- */
+function hideUpdateModal() { const m = $('#updateModal'); if (m) m.classList.add('hidden'); updState = 'idle'; }
+function showUpdatePrompt(version) {
+  updState = 'prompt';
+  $('#updMsg').innerHTML = '新しいバージョン <b>v' + (version || '') + '</b> が公開されています。<br>最新版に更新しますか？';
+  $('#updBarWrap').classList.add('hidden'); $('#updPct').textContent = '';
+  $('#updBar').style.width = '0%';
+  $('#updNow').classList.remove('hidden'); $('#updNow').disabled = false;
+  $('#updLater').classList.remove('hidden');
+  $('#updateModal').classList.remove('hidden');
+}
+function startUpdateDownload() {
+  updState = 'downloading';
+  $('#updMsg').innerHTML = 'ダウンロードしています…';
+  $('#updBarWrap').classList.remove('hidden'); $('#updBar').style.width = '0%';
+  $('#updPct').textContent = '0%';
+  $('#updNow').disabled = true; $('#updLater').classList.add('hidden');
+  api.updateDownload();
+}
+function setUpdateProgress(pct) {
+  if (updState !== 'downloading') return;
+  const n = Math.max(0, Math.min(100, Math.round(pct || 0)));
+  $('#updBar').style.width = n + '%';
+  $('#updPct').textContent = 'ダウンロード中… ' + n + '%';
+}
+function showUpdateApplying(version) {
+  updState = 'applying';
+  $('#updateModal').classList.remove('hidden');
+  $('#updMsg').innerHTML = '<b>v' + (version || '') + '</b> を適用しています。<br>まもなく自動で再起動します…';
+  $('#updBarWrap').classList.remove('hidden'); $('#updBar').style.width = '100%';
+  $('#updBar').classList.add('indet'); $('#updPct').textContent = '';
+  $('#updNow').classList.add('hidden'); $('#updLater').classList.add('hidden');
 }
 function wireMenu() { api.onMenu(runMenuAction); }
 // タイトルバー内のカスタムメニューバー

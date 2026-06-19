@@ -479,6 +479,19 @@ sendln "show version"'></textarea></div>
   <script src="../../node_modules/xterm-addon-web-links/lib/xterm-addon-web-links.js"></script>
   <script src="../../node_modules/xterm-addon-canvas/lib/xterm-addon-canvas.js"></script>
   <script src="../../node_modules/xterm-addon-webgl/lib/xterm-addon-webgl.js"></script>
+  <!-- アップデート（プログレスバー付き） -->
+  <div id="updateModal" class="modal hidden">
+    <div class="modal-box small">
+      <div class="modal-head">🔄 アップデート</div>
+      <div class="modal-body">
+        <div id="updMsg" style="line-height:1.7"></div>
+        <div id="updBarWrap" class="upd-bar-wrap hidden"><div id="updBar" class="upd-bar"></div></div>
+        <div id="updPct" class="muted" style="font-size:12px;margin-top:6px;min-height:14px"></div>
+      </div>
+      <div class="modal-foot"><button id="updLater">後で</button><button id="updNow" class="primary">更新する</button></div>
+    </div>
+  </div>
+
   <script src="../ttl.js"></script>
   <script src="features3.js"></script>
   <script src="renderer.js"></script>

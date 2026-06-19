@@ -1092,8 +1092,9 @@ function initUpdater() {
     autoUpdater.on('download-progress', (p) => broadcastAll('update:progress', { percent: Math.round((p && p.percent) || 0) }));
     autoUpdater.on('update-downloaded', (info) => {
       broadcastAll('update:downloaded', { version: info && info.version });
-      // 利用者は「アップグレードしますか？」で既に同意済み → 自動で再起動して適用
-      setTimeout(() => { try { autoUpdater.quitAndInstall(); } catch (_) {} }, 1500);
+      // 利用者は「アップグレードしますか？」で既に同意済み → サイレント(/S)で適用し自動再起動。
+      // quitAndInstall(isSilent=true, isForceRunAfter=true): NSISウィザードを出さずバックグラウンド更新。
+      setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (_) {} }, 1500);
     });
     autoUpdater.on('error', () => broadcastAll('update:error', {})); // 配布先未設定/オフライン時
     updaterReady = true;
@@ -1115,7 +1116,7 @@ ipcMain.handle('update:check', async () => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.on('update:download', () => { try { if (autoUpdater) autoUpdater.downloadUpdate().catch(() => {}); } catch (_) {} });
-ipcMain.on('update:install', () => { try { if (autoUpdater) autoUpdater.quitAndInstall(); } catch (_) {} });
+ipcMain.on('update:install', () => { try { if (autoUpdater) autoUpdater.quitAndInstall(true, true); } catch (_) {} });
 
 // タブのドラッグ移動。レンダラはタブ列から外して離した時だけこれを呼ぶ。
 //   別ウィンドウの上 → そのウィンドウへ取り込み／それ以外(同じウィンドウ上を含む) → 新ウィンドウへ分離
