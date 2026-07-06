@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ネイティブ依存(serialport/koffi)のビルド用。electronのフルインストールは不要なので
+      # devDependencies を含めて入れる（回帰テストは素のnodeで動く純JS）。
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Syntax check (node --check)
+        run: npm run check
+
+      - name: Regression tests (transfer / ttl / features3 / vault)
+        run: npm test
+
+      - name: E2E smoke (Playwright + Electron)
+        run: npm run e2e
+
+  # 署名付きビルドの雛形。既定では手動起動のみ（勝手にリリースしない方針）。
+  # 署名を有効化するには Secrets に証明書情報を入れ、下の env を解禁する。
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci || npm install
+      - name: Build (unsigned by default)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # --- 署名を有効化する場合はここを解禁（Repo Secrets に登録してから） ---
+          # CSC_LINK: ${{ secrets.CSC_LINK }}              # base64 の .pfx か URL
+          # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}   # Azure Trusted Signing を使う場合
+          # AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          # AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: npm run dist
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: waterm-setup
+          path: |
+            release/WaTerm-Setup-*.exe
+            release/latest.yml
+            release/*.blockmap
+          if-no-files-found: warn
+      # 注意: gh release create は CI では行わない（公開は毎回ユーザー承認）。

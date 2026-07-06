@@ -9,10 +9,15 @@ npm-debug.log*
 waterm-sessions*.json
 waterm-settings*.json
 waterm-snippets*.json
+waterm-vault*.json
 *.bak
 *.corrupt
 # ローカル開発用ヘルパー（マシン依存のキャッシュ参照）
 stamp-electron-version.ps1
+# Playwright E2E の生成物
+test-results/
+playwright-report/
+.playwright/
 # 自己署名のコード署名証明書（秘密鍵はコミット禁止）
 build/*.pfx
 build/*.cer

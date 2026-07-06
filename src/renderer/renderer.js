@@ -38,6 +38,7 @@ async function init() {
   if (!DB.sessions) DB.sessions = [];
   SETTINGS = Object.assign({ theme: 'dark', fontSize: 14, sidebar: true, sftp: false }, (await api.loadSettings()) || {});
   SNIPPETS = (await api.loadSnippets()) || [];
+  try { const vs = await api.vaultStatus(); if (vs && vs.enabled && !vs.unlocked) await promptUnlock(); } catch (_) {}
   applyTheme();
   $('#sidebar').classList.toggle('collapsed', !SETTINGS.sidebar);
   HL_RULES = parseHighlightRules(SETTINGS.highlightText);
@@ -321,6 +322,7 @@ async function buildCfg(s, cols, rows) {
     forwards: s.forwards || '',
   };
   if (s.protocol === 'serial') { cfg.serialPort = s.serialPort; cfg.baud = s.baud; cfg.dataBits = s.dataBits; cfg.parity = s.parity; cfg.stopBits = s.stopBits; cfg.flow = s.flow; }
+  if (s.protocol === 'shell') cfg.shellKind = s.shellKind || 'powershell';
   if (s.protocol === 'rdp') { cfg.domain = s.domain; cfg.fullscreen = s.fullscreen; cfg.width = s.width; cfg.height = s.height; cfg.clipboard = s.clipboard; cfg.drives = s.drives; cfg.multimon = s.multimon; cfg.adminSession = s.adminSession; }
   if (s.password) cfg.password = s.password; // クイック接続用（平文一時）
   if (s.passwordStored) cfg.password = await api.decrypt(s.passwordStored);
@@ -423,7 +425,9 @@ async function openSession(s) {
   const id = uid();
   const tab = buildTermTab(id, s, 'connecting');
   const term = tab.term, fit = tab.fit;
-  const target = s.protocol === 'serial' ? ((s.serialPort || 'COM?') + ' @ ' + (s.baud || 9600) + 'bps') : (s.host + ':' + s.port);
+  const target = s.protocol === 'serial' ? ((s.serialPort || 'COM?') + ' @ ' + (s.baud || 9600) + 'bps')
+    : s.protocol === 'shell' ? (s.shellKind || 'powershell')
+    : (s.host + ':' + s.port);
   term.writeln('\x1b[90m' + s.name + ' へ接続中... (' + s.protocol.toUpperCase() + ' ' + target + ')\x1b[0m');
   const cfg = await buildCfg(s, term.cols, term.rows);
   const res = await api.connOpen(id, cfg);
@@ -698,6 +702,15 @@ function closeTab(id) {
 function wireData() {
   api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); if (t.cfgCap) t.cfgCap.feed(data); t.term.write(applyHighlights(data, t)); } });
   api.onTransferDone(({ id }) => { const t = tabs.get(id); if (t) { t.xferActive = false; if (id === activeId) updateXferBtn(); } });
+  // ZMODEMオートスタート: 相手の sz/sb 検出をmainから受けたら自動で受信を開始（設定でOFF可）。
+  api.onTransferAutostart(async ({ id, proto }) => {
+    if (SETTINGS.autoZmodem === false) return;
+    const t = tabs.get(id); if (!t || t.xferActive) return;
+    toast('⇩ ' + (proto || 'ZMODEM').toUpperCase() + ' を検出：受信を自動開始します');
+    const r = await api.transferStart(id, proto || 'zmodem', 'recv');
+    if (r && r.started) { t.xferActive = true; if (id === activeId) updateXferBtn(); }
+    else if (r && r.error) toast('自動受信を開始できません: ' + r.error, true);
+  });
   api.onAdoptTab(adoptTab);
   api.onSftpEditEvent((p) => {
     if (p && p.ok) { toast('⤴ 保存を検知：' + p.name + ' をアップロードしました'); if (sftpVisible()) $('#sftpStatus').textContent = '⤴ ' + p.name + ' を反映しました (' + new Date().toLocaleTimeString('ja-JP') + ')'; if (sftpVisible()) sftpRefresh(); }
@@ -1370,6 +1383,9 @@ function wireUI() {
   sessUl.addEventListener('dragover', (e) => { if (dragSessId) e.preventDefault(); });
   sessUl.addEventListener('drop', (e) => { if (!dragSessId) return; e.preventDefault(); const id = dragSessId; clearDropMarks(); moveSession(id, null, '', true); });
   $('#btnImport').onclick = importSessions;
+  $('#btnImportSsh').onclick = importSshConfig;
+  $('#btnVault').onclick = manageMaster;
+  $('#btnShell').onclick = () => openLocalShell('powershell');
   $('#btnExport').onclick = exportSessions;
   $('#btnSidebar').onclick = toggleSidebar;
   $('#btnSftp').onclick = toggleSftp;
@@ -1525,6 +1541,81 @@ async function importSessions() {
     for (const s of incoming) { if (!s.id) s.id = uid(); DB.sessions.push(s); }
     if (r.data.folders) DB.folders = Array.from(new Set([...(DB.folders || []), ...r.data.folders]));
     persistSessions(); renderSessions(); alert(incoming.length + ' 件のセッションをインポートしました');
+  }
+}
+
+async function importSshConfig() {
+  const r = await api.importSshConfig();
+  if (!r || !r.ok) { if (r && r.error) alert('ssh_config を読めません: ' + r.error); return; }
+  const list = r.sessions || [];
+  if (!list.length) { alert('取り込める Host エントリがありませんでした。'); return; }
+  // 既存(名前+ホスト)と重複するものは除外
+  const seen = new Set(DB.sessions.map((s) => (s.name || '') + ' ' + (s.host || '')));
+  let added = 0;
+  for (const s of list) {
+    const key = (s.name || '') + ' ' + (s.host || '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    s.id = uid();
+    DB.sessions.push(s);
+    added++;
+  }
+  persistSessions(); renderSessions();
+  alert(added + ' 件を取り込みました（重複 ' + (list.length - added) + ' 件はスキップ）。\n※鍵認証は IdentityFile を引き継ぎましたが、パスフレーズ/踏み台は編集で設定してください。');
+}
+
+// ローカルシェル（PowerShell/cmd/WSL）をタブで開く。パイプ方式（簡易シェル・完全なPTYではない）。
+function openLocalShell(kind) {
+  const names = { powershell: 'PowerShell', pwsh: 'PowerShell 7', cmd: 'コマンドプロンプト', wsl: 'WSL' };
+  const k = kind || 'powershell';
+  openSession({ name: '＞ ' + (names[k] || k), protocol: 'shell', shellKind: k, encoding: 'utf8', newline: 'crlf', localEcho: true });
+}
+
+/* ---------------- マスターパスワード保管庫 ---------------- */
+// 保存済み秘密(passwordStored/phraseStored)を一括で再暗号化する。
+async function reencryptSecrets(toDefault) {
+  const refs = [], strs = [];
+  for (const s of DB.sessions) {
+    for (const f of ['passwordStored', 'phraseStored']) {
+      if (s[f]) { refs.push([s, f]); strs.push(s[f]); }
+    }
+  }
+  if (!strs.length) return;
+  const out = await api.vaultReencrypt(strs, toDefault);
+  refs.forEach(([s, f], i) => { s[f] = out[i]; });
+  persistSessions();
+}
+// 起動時などに解錠を促す。最大5回。キャンセルすると保存パスワードは使えない旨を通知。
+async function promptUnlock() {
+  for (let i = 0; i < 5; i++) {
+    const p = await askText('マスターパスワードを入力', { password: true });
+    if (p === null) { toast('ロック中：保存済みパスワードは使用できません（解錠するまで）', true); return false; }
+    const r = await api.vaultUnlock(p);
+    if (r && r.ok) { toast('🔓 解錠しました'); return true; }
+    alert((r && r.error) || '解錠に失敗しました');
+  }
+  return false;
+}
+// 🔒 ボタン: 設定/解除/解錠のハブ。
+async function manageMaster() {
+  const vs = await api.vaultStatus();
+  if (!vs || !vs.enabled) {
+    const p1 = await askText('マスターパスワードを新規設定', { password: true });
+    if (!p1) return;
+    const p2 = await askText('確認のためもう一度入力', { password: true });
+    if (p2 !== p1) { alert('パスワードが一致しません。'); return; }
+    const r = await api.vaultEnable(p1);
+    if (!r || !r.ok) { alert((r && r.error) || '設定に失敗しました'); return; }
+    await reencryptSecrets(false); // マスター鍵で mpw へ再暗号化
+    alert('🔒 マスターパスワードを設定しました。\n次回起動時に入力が必要になります。忘れると保存済みパスワードは復元できません。');
+    return;
+  }
+  if (!vs.unlocked) { if (!(await promptUnlock())) return; }
+  const disable = confirm('マスターパスワードを解除しますか？\nOK＝解除（OSキーチェーン方式に戻す） / キャンセル＝そのまま');
+  if (disable) {
+    await reencryptSecrets(true); // 解錠中に mpw → 既定方式へ戻す
+    const r = await api.vaultDisable();
+    alert(r && r.ok ? 'マスターパスワードを解除しました。' : ((r && r.error) || '解除に失敗しました'));
   }
 }
 

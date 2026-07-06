@@ -1,0 +1,32 @@
+#!/bin/sh
+# WaTerm pre-commit: 資格情報や秘密鍵の誤コミットを機械的に止める。
+# .gitignore は git add -A/明示 add を防げないため、コミット直前にステージ内容を検査する。
+# どうしても必要な時だけ `git commit --no-verify` で明示的にバイパスできる。
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1) パスワードを含むデータ/秘密鍵/署名ヘルパーのファイル名を弾く
+blocked=$(printf '%s\n' "$staged" | grep -E \
+  'waterm-(sessions|settings|snippets|vault)[^/]*\.json$|(^|/)[^/]*\.(pfx|p12|pem|key|cer)$|dist-signed\.ps1$|(^|/)[^/]*RESTORE[^/]*\.json$')
+
+if [ -n "$blocked" ]; then
+  echo "✋ コミット中断: 資格情報/秘密鍵を含む可能性のあるファイルがステージされています:" >&2
+  printf '   - %s\n' $blocked >&2
+  echo "   これらは公開リポにコミットしないでください（過去に流出→履歴消去の事故あり）。" >&2
+  echo "   除外: git restore --staged <file>   本当に必要な時のみ: git commit --no-verify" >&2
+  exit 1
+fi
+
+# 2) 追加行に平文/base64パスワードらしき秘密が混ざっていないか軽く検査（JSON以外にも保険）
+#    このフック自身とテストは検出パターン/ダミー値を含むため内容スキャンから除外する。
+leak=$(git diff --cached -U0 --diff-filter=ACM -- . ':(exclude)scripts/hooks/*' ':(exclude)test-vault*.js' | grep -E '^\+' | \
+  grep -Ei '"(password|passphrase|secret)"[[:space:]]*:[[:space:]]*"[^"]+"|"enc:|"b64:' )
+if [ -n "$leak" ]; then
+  echo "✋ コミット中断: 追加行にパスワードらしき値が含まれています:" >&2
+  printf '%s\n' "$leak" | head -5 >&2
+  echo "   誤検知なら git commit --no-verify で継続できます。" >&2
+  exit 1
+fi
+
+exit 0

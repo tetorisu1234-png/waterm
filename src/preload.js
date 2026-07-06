@@ -18,6 +18,14 @@ contextBridge.exposeInMainWorld('api', {
   encrypt: (p) => ipcRenderer.invoke('secure:encrypt', p),
   decrypt: (s) => ipcRenderer.invoke('secure:decrypt', s),
 
+  // マスターパスワード保管庫
+  vaultStatus: () => ipcRenderer.invoke('vault:status'),
+  vaultEnable: (password) => ipcRenderer.invoke('vault:enable', { password }),
+  vaultUnlock: (password) => ipcRenderer.invoke('vault:unlock', { password }),
+  vaultLock: () => ipcRenderer.invoke('vault:lock'),
+  vaultDisable: () => ipcRenderer.invoke('vault:disable'),
+  vaultReencrypt: (list, toDefault) => ipcRenderer.invoke('vault:reencrypt', { list, toDefault }),
+
   // 接続
   connOpen: (id, cfg) => ipcRenderer.invoke('conn:open', { id, cfg }),
   connInput: (id, data) => ipcRenderer.send('conn:input', { id, data }),
@@ -98,6 +106,8 @@ contextBridge.exposeInMainWorld('api', {
   transferStart: (id, proto, dir) => ipcRenderer.invoke('transfer:start', { id, proto, dir }),
   transferAbort: (id) => ipcRenderer.send('transfer:abort', { id }),
   onTransferDone: (cb) => ipcRenderer.on('transfer:done', (e, p) => cb(p)),
+  onTransferAutostart: (cb) => ipcRenderer.on('transfer:autostart', (e, p) => cb(p)),
+  importSshConfig: () => ipcRenderer.invoke('sessions:importSshConfig'),
 
   // SFTP
   sftpRealpath: (id, p) => ipcRenderer.invoke('sftp:realpath', { id, p }),
