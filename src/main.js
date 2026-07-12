@@ -8,12 +8,8 @@ const cp = require('child_process');
 const { spawn } = cp;
 // 古い暗号(レガシーDH)対応: ssh2 を require する前に crypto をパッチする
 const legacyDH = require('./legacy-dh');
-const winembed = require('./winembed');
 const dragchip = require('./dragchip');
-const transfer = require('./transfer');
-const pcap = require('./pcap');
-const fileserver = require('./fileserver');
-const netscan = require('./netscan');
+const pluginHost = require('./plugin-host');
 const crypto = require('crypto');
 const vault = require('./vault');
 const { parseSshConfig } = require('./sshconfig');
@@ -32,6 +28,21 @@ const SET_FILE = path.join(DATA_DIR, 'waterm-settings.json');
 const KNOWN_FILE = path.join(DATA_DIR, 'waterm-knownhosts.json');
 const SNIP_FILE = path.join(DATA_DIR, 'waterm-snippets.json');
 const VAULT_FILE = path.join(DATA_DIR, 'waterm-vault.json'); // salt + 検証トークン（マスター鍵そのものは保存しない）
+// プラグイン置き場（フォルダが正）。同梱プラグインもここへ書き出して管理する。
+// フォルダを置く/消す/編集するだけで追加/削除/変更できる（要再起動）。
+const USER_PLUGINS_DIR = path.join(DATA_DIR, 'plugins');
+// 管理用データ（seed 状態・アーカイブ展開）は plugins/ を汚さないよう内部フォルダへ
+const PLUGIN_CACHE_DIR = path.join(DATA_DIR, 'plugins-cache');
+try { fs.mkdirSync(USER_PLUGINS_DIR, { recursive: true }); } catch (_) {}
+try { fs.mkdirSync(PLUGIN_CACHE_DIR, { recursive: true }); } catch (_) {}
+// ユーザーフォルダから読むプラグイン backend が、アプリ同梱の node_modules
+// （koffi / iconv-lite 等）を解決できるよう、グローバル検索パスに追加する。
+try {
+  const Module = require('module');
+  const appNM = path.resolve(__dirname, '..', 'node_modules');
+  process.env.NODE_PATH = appNM + (process.env.NODE_PATH ? path.delimiter + process.env.NODE_PATH : '');
+  Module._initPaths();
+} catch (_) {}
 let masterKey = null; // マスターパスワード解錠中のみメモリ上に保持
 
 function readJson(file, fallback) {
@@ -122,27 +133,19 @@ const LEGACY_ALGOS = require('./ssh-algos');
 /** id -> { type, client, stream, sock, sftp, enc, newline, localEcho, logStream } */
 const conns = new Map();
 
+// プラグインが接続の送受信データを傍受するためのフック
+//   observers: 観測（通信モニタ等）。rx/tx 両方。返り値は無視。
+//   rxConsumers: rx を消費（ファイル転送等）。true を返すと本体の以降の処理を止める。
+const connDataObservers = [];
+const connRxConsumers = [];
+function emitConnData(id, dir, buf, entry, isEcho) { for (const fn of connDataObservers) { try { fn({ id, dir, buf, entry, isEcho }); } catch (_) {} } }
+function consumeRx(id, buf, entry) { for (const fn of connRxConsumers) { try { if (fn({ id, buf, entry }) === true) return true; } catch (_) {} } return false; }
+
 function send(wc, channel, payload) {
   if (wc && !wc.isDestroyed()) wc.send(channel, payload);
 }
 // 接続の現在の描画先 webContents（ウィンドウ分離で entry.wc が張り替わる）
 function wcOf(id, fallback) { const en = conns.get(id); return (en && en.wc) || fallback; }
-
-// 通信モニタ：送受信バイトを記録し、描画先へ逐次通知する
-const MON_MAX_FRAMES = 20000, MON_MAX_BYTES = 16 * 1024 * 1024;
-function monitorCapture(id, dir, buf) {
-  const en = conns.get(id);
-  if (!en || !en.monitor || !buf || !buf.length) return;
-  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  const ts = Date.now();
-  if (!en.monitorLog) { en.monitorLog = []; en.monitorBytes = 0; }
-  en.monitorLog.push({ dir, ts, bytes: b });
-  en.monitorBytes += b.length;
-  while (en.monitorLog.length > MON_MAX_FRAMES || en.monitorBytes > MON_MAX_BYTES) {
-    const old = en.monitorLog.shift(); if (!old) break; en.monitorBytes -= old.bytes.length;
-  }
-  send(en.wc, 'monitor:data', { id, dir, ts, len: b.length, b64: b.toString('base64') });
-}
 
 function fingerprintSHA256(keyBuf) {
   const crypto = require('crypto');
@@ -155,27 +158,19 @@ function writeRaw(id, bytes) {
   const entry = conns.get(id);
   if (!entry) return;
   const b = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
-  if (entry.monitor) monitorCapture(id, 'tx', b);
+  emitConnData(id, 'tx', b, entry, false);
   if (entry.type === 'ssh' && entry.stream) entry.stream.write(b);
   else if (entry.type === 'telnet' && entry.sock) entry.sock.write(b);
   else if (entry.type === 'serial' && entry.port) { try { entry.port.write(b); } catch (_) {} }
 }
 
 // 受信データを文字コード変換して描画 + ログ
-const ZRQINIT_MARK = Buffer.from([0x2a, 0x2a, 0x18]); // "**" + ZDLE = ZMODEMヘッダの先頭
 function handleIncomingData(wc, id, buf, isEcho) {
   const entry = conns.get(id);
   if (!entry) return;
-  if (!isEcho && entry.monitor) monitorCapture(id, 'rx', buf);
-  // ファイル転送セッション中は生バイトを横取りしてプロトコルへ
-  if (entry.xfer) { try { entry.xfer.onData(buf); } catch (_) {} return; }
-  // ZMODEMオートスタート: 相手が sz/sb を実行すると ZRQINIT("**"+ZDLE) が流れてくる。
-  // 未転送中に検出したらレンダラへ通知して自動で受信を開始する（相手はZRINIT受領まで再送するので数百ms遅延は無害）。
-  if (!isEcho && entry.autoZmodem !== false && !entry.zAutoPending && buf.includes(ZRQINIT_MARK)) {
-    entry.zAutoPending = true;
-    setTimeout(() => { const en = conns.get(id); if (en) en.zAutoPending = false; }, 5000); // 連続検出のクールダウン
-    send((entry && entry.wc) || wc, 'transfer:autostart', { id, proto: 'zmodem' });
-  }
+  // プラグイン傍受（観測＝通信モニタ記録・ZMODEM自動検知 / 消費＝ファイル転送中の生バイト横取り）
+  emitConnData(id, 'rx', buf, entry, isEcho);
+  if (consumeRx(id, buf, entry)) return;
   let text;
   try { text = iconv.decode(buf, entry.enc || 'utf8'); }
   catch (_) { text = buf.toString('utf8'); }
@@ -209,7 +204,7 @@ function writeToConn(id, str) {
   let bytes;
   try { bytes = iconv.encode(s, entry.enc || 'utf8'); }
   catch (_) { bytes = Buffer.from(s, 'utf8'); }
-  if (entry.monitor) monitorCapture(id, 'tx', bytes);
+  emitConnData(id, 'tx', bytes, entry, false);
   if (entry.type === 'ssh' && entry.stream) entry.stream.write(bytes);
   else if (entry.type === 'telnet' && entry.sock) entry.sock.write(bytes);
   else if (entry.type === 'serial' && entry.port) { try { entry.port.write(bytes); } catch (_) {} }
@@ -284,108 +279,6 @@ function listSerialPorts() {
   return SP.list()
     .then((l) => l.map((p) => ({ path: p.path, friendlyName: p.friendlyName, manufacturer: p.manufacturer })))
     .catch(() => []);
-}
-
-// ---------------------------------------------------------------------------
-// RDP — Windows標準のリモートデスクトップ(mstsc)を .rdp ファイル生成して起動
-// ---------------------------------------------------------------------------
-function buildRdpFile(cfg, embedded) {
-  const host = (cfg.host || '').trim();
-  if (!host) throw new Error('ホストが指定されていません');
-  const port = Number(cfg.port) || 3389;
-  const user = (cfg.domain ? cfg.domain + '\\' : '') + (cfg.username || '');
-  const lines = [];
-  lines.push('full address:s:' + host + ':' + port);
-  if (embedded) {
-    // 埋め込み時: ペインのサイズをそのままリモート解像度にし、リサイズに追従(枠ぴったり)
-    lines.push('screen mode id:i:1');
-    lines.push('desktopwidth:i:' + (Number(cfg.paneWidth) || Number(cfg.width) || 1600));
-    lines.push('desktopheight:i:' + (Number(cfg.paneHeight) || Number(cfg.height) || 900));
-    lines.push('dynamic resolution:i:1');
-  } else {
-    lines.push('screen mode id:i:' + (cfg.fullscreen === false ? 1 : 2));
-    if (cfg.fullscreen === false) {
-      lines.push('desktopwidth:i:' + (Number(cfg.width) || 1280));
-      lines.push('desktopheight:i:' + (Number(cfg.height) || 800));
-    }
-  }
-  if (user) lines.push('username:s:' + user);
-  lines.push('use multimon:i:' + (cfg.multimon ? 1 : 0));
-  lines.push('redirectclipboard:i:' + (cfg.clipboard === false ? 0 : 1));
-  if (cfg.drives) lines.push('drivestoredirect:s:*');
-  if (cfg.adminSession) lines.push('administrative session:i:1');
-  lines.push('authentication level:i:2');
-  lines.push('prompt for credentials:i:0');
-  if (cfg.password && user) {
-    try {
-      const psScript = 'Add-Type -AssemblyName System.Security; $pw=([Console]::In.ReadToEnd() -replace "[\\r\\n]+$",""); $b=[System.Text.Encoding]::Unicode.GetBytes($pw); $e=[System.Security.Cryptography.ProtectedData]::Protect($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser); -join ($e | ForEach-Object { $_.ToString(\'x2\') })';
-      const hex = cp.execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psScript], { input: cfg.password, encoding: 'utf8', windowsHide: true }).trim();
-      if (/^[0-9a-f]+$/i.test(hex)) lines.push('password 51:b:' + hex);
-    } catch (_) {}
-  }
-  const file = path.join(app.getPath('temp'), 'waterm-rdp-' + Date.now() + '.rdp');
-  fs.writeFileSync(file, lines.join('\r\n') + '\r\n', 'ascii');
-  return file;
-}
-
-// 外部の mstsc ウィンドウで開く（埋め込み不可時のフォールバック）
-function rdpLaunch(cfg) {
-  return new Promise((resolve) => {
-    try {
-      if (process.platform !== 'win32') { resolve({ ok: false, error: 'RDPはWindowsでのみ利用できます' }); return; }
-      const file = buildRdpFile(cfg, false);
-      const p = spawn('mstsc', [file], { windowsHide: true, detached: true, stdio: 'ignore' });
-      p.on('error', (e) => resolve({ ok: false, error: e.message }));
-      p.unref();
-      setTimeout(() => resolve({ ok: true, external: true }), 300);
-    } catch (e) { resolve({ ok: false, error: e.message }); }
-  });
-}
-
-// mstsc を起動し、そのウィンドウを WaTerm のウィンドウ内に埋め込む
-function rdpEmbed(wc, id, cfg) {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32') { resolve({ ok: false, error: 'RDPはWindowsでのみ利用できます' }); return; }
-    // 高速モードはGPU合成が有効で埋め込み(子HWND)が見えないため、外部mstscで開く
-    if (PERF_MODE) { rdpLaunch(cfg).then((r) => resolve(Object.assign({ embedded: false }, r))); return; }
-    const reqWin = BrowserWindow.fromWebContents(wc) || mainWin; // 要求元ウィンドウに埋め込む（分離ウィンドウ対応）
-    if (!winembed.isAvailable || !reqWin) { rdpLaunch(cfg).then((r) => resolve(Object.assign({ embedded: false }, r))); return; }
-    let file;
-    try { file = buildRdpFile(cfg, true); }
-    catch (e) { resolve({ ok: false, error: e.message }); return; }
-    const proc = spawn('mstsc', [file], { detached: false, stdio: 'ignore' });
-    const entry = { type: 'rdp', proc, hwnd: null, parent: winembed.hwndFromBuffer(reqWin.getNativeWindowHandle()) };
-    conns.set(id, entry);
-    let settled = false;
-    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
-    proc.on('error', (e) => done({ ok: false, error: e.message }));
-    proc.on('exit', () => { send(wc, 'conn:status', { id, status: 'closed' }); });
-    let tries = 0;
-    const timer = setInterval(() => {
-      tries++;
-      let hwnd = null;
-      try { hwnd = winembed.findWindowByPid(proc.pid); } catch (_) {}
-      if (hwnd) {
-        clearInterval(timer);
-        entry.hwnd = hwnd;
-        winembed.embed(hwnd, entry.parent);
-        send(wc, 'conn:status', { id, status: 'connected' });
-        done({ ok: true, embedded: true });
-      } else if (tries > 75) { // 約15秒
-        clearInterval(timer);
-        done({ ok: false, error: 'RDPウィンドウを取得できませんでした' });
-      }
-    }, 200);
-  });
-}
-function rdpPosition(id, rect) {
-  const en = conns.get(id);
-  if (!en || en.type !== 'rdp' || !en.hwnd) return;
-  const clientH = winembed.clientHeight(en.parent);
-  const dpr = rect.dpr || 1;
-  const menuOffset = clientH - (rect.innerH || 0) * dpr;
-  const x = rect.left * dpr, y = rect.top * dpr + menuOffset, w = rect.width * dpr, h = rect.height * dpr;
-  winembed.move(en.hwnd, x, y, w, h);
 }
 
 // ---------------------------------------------------------------------------
@@ -720,6 +613,8 @@ function permString(mode) {
 // ---------------------------------------------------------------------------
 let mainWin = null;
 const windows = new Set();
+// プラグインがウィンドウ破棄時の後始末（webContents別ジョブの停止等）を登録するフック
+const windowClosedHooks = [];
 const WEBPREFS = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false };
 // ウィンドウを登録。閉じられたら、そのウィンドウが描画先の接続だけを閉じる
 function registerWindow(win) {
@@ -729,9 +624,7 @@ function registerWindow(win) {
   win.on('unmaximize', () => send(wc, 'win:state', { maximized: false }));
   win.on('closed', () => {
     windows.delete(win);
-    const cp2 = captureProcs.get(wc.id); if (cp2) { try { cp2.kill(); } catch (_) {} captureProcs.delete(wc.id); }
-    const dp = diagProcs.get(wc.id); if (dp) { try { dp.kill(); } catch (_) {} diagProcs.delete(wc.id); }
-    const sj = scanJobs.get(wc.id); if (sj) { try { sj(); } catch (_) {} scanJobs.delete(wc.id); }
+    for (const fn of windowClosedHooks) { try { fn(wc.id); } catch (_) {} }
     for (const [id, en] of conns) { if (en.wc === wc) closeConn(id); }
     if (win === mainWin) mainWin = null;
   });
@@ -873,14 +766,6 @@ ipcMain.handle('conn:open', async (e, { id, cfg }) => {
   return sshConnect(e.sender, id, c);
 });
 ipcMain.handle('serial:list', () => listSerialPorts());
-ipcMain.handle('rdp:launch', (e, cfg) => rdpLaunch(cfg || {}));
-ipcMain.handle('rdp:embed', (e, { id, cfg }) => {
-  const c = { ...cfg };
-  if (c.passwordStored) c.password = decryptSecret(c.passwordStored);
-  return rdpEmbed(e.sender, id, c);
-});
-ipcMain.on('rdp:position', (e, { id, rect }) => rdpPosition(id, rect));
-ipcMain.on('rdp:show', (e, { id, visible }) => { const en = conns.get(id); if (en && en.type === 'rdp' && en.hwnd) winembed.show(en.hwnd, visible); });
 ipcMain.on('conn:input', (e, { id, data }) => {
   const entry = conns.get(id);
   if (entry && entry.xfer) return; // ファイル転送中は端末入力を無視
@@ -941,52 +826,6 @@ ipcMain.handle('conn:sendFile', async (e, { id, delayMs }) => {
   return { ok: true, lines: lines.length, name: path.basename(r.filePaths[0]) };
 });
 
-// ファイル転送プロトコル (XMODEM / XMODEM-1K / YMODEM)
-const PROTO_LABEL = { xmodem: 'XMODEM', xmodem1k: 'XMODEM-1K', ymodem: 'YMODEM', zmodem: 'ZMODEM', kermit: 'Kermit' };
-const MULTIFILE = { ymodem: true, zmodem: true, kermit: true }; // ファイル名/複数ファイルを扱うプロトコル
-ipcMain.handle('transfer:start', async (e, { id, proto, dir }) => {
-  const en = conns.get(id);
-  if (!en) return { ok: false, error: '接続がありません' };
-  if (en.type === 'rdp') return { ok: false, error: 'この接続では使えません' };
-  if (en.xfer) return { ok: false, error: '転送が進行中です' };
-  if (!PROTO_LABEL[proto]) return { ok: false, error: '未対応のプロトコルです' };
-  const wc = e.sender;
-  const termMsg = (m, color) => send(wc, 'conn:data', { id, data: '\r\n\x1b[' + (color || '36') + 'm[転送] ' + m + '\x1b[0m\r\n' });
-  let files = null, saveFile = null;
-  if (dir === 'send') {
-    const r = await dialog.showOpenDialog(mainWin, { title: '送信するファイル', properties: MULTIFILE[proto] ? ['openFile', 'multiSelections'] : ['openFile'] });
-    if (r.canceled || !r.filePaths.length) return { ok: false };
-    try { files = r.filePaths.map((p) => ({ name: path.basename(p), data: fs.readFileSync(p) })); }
-    catch (er) { return { ok: false, error: er.message }; }
-  } else {
-    if (MULTIFILE[proto]) {
-      const r = await dialog.showOpenDialog(mainWin, { title: '受信ファイルの保存先フォルダ', properties: ['openDirectory', 'createDirectory'] });
-      if (r.canceled || !r.filePaths.length) return { ok: false };
-      const dir2 = r.filePaths[0];
-      saveFile = async (name, buf) => { const p = path.join(dir2, name || ('received_' + Date.now())); fs.writeFileSync(p, buf); return p; };
-    } else {
-      let dl; try { dl = app.getPath('downloads'); } catch (_) { dl = app.getPath('documents'); }
-      const r = await dialog.showSaveDialog(mainWin, { title: '受信ファイルの保存先', defaultPath: path.join(dl, 'received.bin') });
-      if (r.canceled || !r.filePath) return { ok: false };
-      saveFile = async (_name, buf) => { fs.writeFileSync(r.filePath, buf); return r.filePath; };
-    }
-  }
-  let lastPct = -1;
-  en.xfer = transfer.startTransfer({
-    proto, dir,
-    send: (bytes) => writeRaw(id, bytes),
-    log: (m) => termMsg(m),
-    progress: (p) => {
-      const cur = p.sent != null ? p.sent : p.received; const tot = p.total;
-      const pct = tot ? Math.floor(cur / tot * 100) : null;
-      if (pct !== null && pct !== lastPct) { lastPct = pct; send(wc, 'conn:data', { id, data: '\r\x1b[36m[転送] ' + (p.name || '') + ' ' + pct + '% (' + cur + '/' + tot + ')\x1b[0m' }); }
-    },
-    done: (r) => { en.xfer = null; if (r && r.ok) termMsg('すべて完了しました', 32); else termMsg('失敗: ' + ((r && r.error) || '不明なエラー'), 31); send(wc, 'transfer:done', { id, result: r }); },
-  });
-  termMsg(PROTO_LABEL[proto] + ' ' + (dir === 'send' ? '送信' : '受信') + 'を開始しました。相手側で対応コマンド（例: sx/sb/sz, rx/rb/rz）を実行してください', 33);
-  return { ok: true, started: true };
-});
-ipcMain.on('transfer:abort', (e, { id }) => { const en = conns.get(id); if (en && en.xfer) { try { en.xfer.abort(); } catch (_) {} } });
 
 // テキストファイル読込（マクロ .ttl 等）
 ipcMain.handle('dialog:openText', async (e, { exts }) => {
@@ -1269,226 +1108,10 @@ ipcMain.on('win:close', (e) => { const w = BrowserWindow.fromWebContents(e.sende
 ipcMain.handle('win:isMaximized', (e) => { const w = BrowserWindow.fromWebContents(e.sender); return !!(w && w.isMaximized()); });
 ipcMain.on('win:devtools', (e) => { try { e.sender.toggleDevTools(); } catch (_) {} });
 ipcMain.on('app:quit', () => app.quit());
+// アプリ全体を再起動（プラグインの有効/無効を反映するため。backendはmainプロセスで読むため再読込では不足）
+ipcMain.on('app:relaunch', () => { try { app.relaunch(); } catch (_) {} app.exit(0); });
 ipcMain.on('app:about', (e) => showAbout(BrowserWindow.fromWebContents(e.sender)));
 
-// ---------------------------------------------------------------------------
-// 通信モニタ（WaTermのセッション送受信）
-// ---------------------------------------------------------------------------
-ipcMain.handle('monitor:toggle', (e, { id, on }) => {
-  const en = conns.get(id); if (!en) return { ok: false, error: '接続がありません' };
-  en.monitor = !!on;
-  if (on && !en.monitorLog) { en.monitorLog = []; en.monitorBytes = 0; }
-  return { ok: true, on: en.monitor, frames: en.monitorLog ? en.monitorLog.length : 0 };
-});
-ipcMain.handle('monitor:state', (e, { id }) => {
-  const en = conns.get(id); if (!en) return { ok: false };
-  return { ok: true, on: !!en.monitor, frames: en.monitorLog ? en.monitorLog.length : 0, bytes: en.monitorBytes || 0 };
-});
-ipcMain.handle('monitor:clear', (e, { id }) => { const en = conns.get(id); if (en) { en.monitorLog = []; en.monitorBytes = 0; } return { ok: true }; });
-ipcMain.handle('monitor:export', async (e, { id }) => {
-  const en = conns.get(id); if (!en || !en.monitorLog || !en.monitorLog.length) return { ok: false, error: '記録がありません' };
-  const win = BrowserWindow.fromWebContents(e.sender) || mainWin;
-  const r = await dialog.showSaveDialog(win, { title: '通信モニタを pcap で保存', defaultPath: path.join(app.getPath('documents'), 'waterm-capture.pcap'), filters: [{ name: 'pcap', extensions: ['pcap'] }] });
-  if (r.canceled || !r.filePath) return { ok: false };
-  try {
-    const buf = pcap.buildPcap(en.monitorLog, { remoteIp: en.host, remotePort: en.port });
-    fs.writeFileSync(r.filePath, buf);
-    return { ok: true, path: r.filePath, frames: en.monitorLog.length };
-  } catch (er) { return { ok: false, error: er.message }; }
-});
-
-// ---------------------------------------------------------------------------
-// パケットキャプチャ（インストール済み Wireshark の tshark を利用）
-// ---------------------------------------------------------------------------
-let tsharkPathCache;
-function findTshark() {
-  if (tsharkPathCache !== undefined) return tsharkPathCache;
-  const cands = [
-    'C:/Program Files/Wireshark/tshark.exe',
-    'C:/Program Files (x86)/Wireshark/tshark.exe',
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Wireshark', 'tshark.exe') : null,
-  ].filter(Boolean);
-  tsharkPathCache = cands.find((p) => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
-  return tsharkPathCache;
-}
-const captureProcs = new Map(); // webContents.id -> child process
-ipcMain.handle('capture:tshark', () => ({ path: findTshark() }));
-ipcMain.handle('capture:interfaces', async () => {
-  const tsh = findTshark(); if (!tsh) return { ok: false, error: 'tshark が見つかりません（Wireshark をインストールしてください）' };
-  return new Promise((resolve) => {
-    cp.execFile(tsh, ['-D'], { timeout: 8000, windowsHide: true }, (err, stdout, stderr) => {
-      if (err && !stdout) return resolve({ ok: false, error: (stderr || err.message || '').trim() });
-      const list = [];
-      for (const line of String(stdout).split(/\r?\n/)) {
-        const m = /^(\d+)\.\s+(.+)$/.exec(line.trim());
-        if (m) { const rest = m[2]; const fm = /\(([^)]+)\)\s*$/.exec(rest); list.push({ id: m[1], name: fm ? fm[1] : rest, raw: rest }); }
-      }
-      resolve({ ok: true, interfaces: list });
-    });
-  });
-});
-ipcMain.handle('capture:start', (e, { iface, filter }) => {
-  const tsh = findTshark(); if (!tsh) return { ok: false, error: 'tshark が見つかりません' };
-  const wcid = e.sender.id;
-  if (captureProcs.has(wcid)) { try { captureProcs.get(wcid).kill(); } catch (_) {} captureProcs.delete(wcid); }
-  const SEP = '\x1f';
-  const args = ['-i', String(iface || '1'), '-l', '-n',
-    '-T', 'fields', '-e', 'frame.number', '-e', 'frame.time_relative', '-e', 'ip.src', '-e', 'ip.dst',
-    '-e', '_ws.col.Protocol', '-e', 'frame.len', '-e', '_ws.col.Info', '-E', 'separator=' + SEP];
-  if (filter && filter.trim()) { args.push('-Y', filter.trim()); }
-  let proc;
-  try { proc = spawn(tsh, args, { windowsHide: true }); }
-  catch (er) { return { ok: false, error: er.message }; }
-  captureProcs.set(wcid, proc);
-  let buf = '';
-  proc.stdout.on('data', (d) => {
-    buf += d.toString('utf8');
-    let nl; while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).replace(/\r$/, ''); buf = buf.slice(nl + 1);
-      if (!line) continue;
-      const f = line.split(SEP);
-      send(e.sender, 'capture:packet', { no: f[0], time: f[1], src: f[2], dst: f[3], proto: f[4], len: f[5], info: f[6] || '' });
-    }
-  });
-  let errBuf = '';
-  proc.stderr.on('data', (d) => { errBuf += d.toString('utf8'); });
-  proc.on('close', (code) => { captureProcs.delete(wcid); send(e.sender, 'capture:end', { code, error: code ? errBuf.trim() : '' }); });
-  proc.on('error', (er) => { captureProcs.delete(wcid); send(e.sender, 'capture:end', { code: -1, error: er.message }); });
-  return { ok: true };
-});
-ipcMain.on('capture:stop', (e) => { const p = captureProcs.get(e.sender.id); if (p) { try { p.kill(); } catch (_) {} captureProcs.delete(e.sender.id); } });
-
-// ---------------------------------------------------------------------------
-// ネットワーク診断（ローカル実行: ping / tracert / nslookup）
-// 自分のPCから対象ホストへコマンドを実行し、出力を逐次描画先へ流す。
-// 出力は日本語Windowsのコンソール文字コード(CP932)なので iconv で復号する。
-// ---------------------------------------------------------------------------
-const diagProcs = new Map(); // webContents.id -> child process（1ウィンドウ1実行）
-ipcMain.handle('diag:run', (e, { kind, host, count }) => {
-  const h = String(host || '').trim();
-  if (!h) return { ok: false, error: 'ホスト名/IPを入力してください' };
-  // 引数に使える形だけ許可（spawnはshell無しだが、紛れ込み防止に最低限のサニタイズ）
-  if (!/^[A-Za-z0-9._:\-%]+$/.test(h)) return { ok: false, error: 'ホスト名に使用できない文字が含まれています' };
-  const wcid = e.sender.id;
-  const prev = diagProcs.get(wcid); if (prev) { try { prev.kill(); } catch (_) {} diagProcs.delete(wcid); }
-  let cmd, args;
-  if (kind === 'ping') {
-    const n = parseInt(count, 10);
-    cmd = 'ping';
-    args = (!n || n <= 0) ? ['-t', h] : ['-n', String(Math.min(n, 1000)), h]; // 0/空＝連続(-t)
-  } else if (kind === 'tracert') {
-    cmd = 'tracert'; args = ['-h', '30', h];
-  } else if (kind === 'nslookup') {
-    cmd = 'nslookup'; args = [h];
-  } else return { ok: false, error: '不明な診断種別です' };
-  let child;
-  try { child = spawn(cmd, args, { windowsHide: true }); }
-  catch (er) { return { ok: false, error: er.message }; }
-  diagProcs.set(wcid, child);
-  const dec = (b) => { try { return iconv.decode(b, 'cp932'); } catch (_) { return b.toString('utf8'); } };
-  child.stdout.on('data', (b) => send(e.sender, 'diag:data', { text: dec(b) }));
-  child.stderr.on('data', (b) => send(e.sender, 'diag:data', { text: dec(b) }));
-  child.on('error', (er) => { if (diagProcs.get(wcid) === child) diagProcs.delete(wcid); send(e.sender, 'diag:end', { code: -1, error: er.message }); });
-  child.on('close', (code) => { if (diagProcs.get(wcid) === child) diagProcs.delete(wcid); send(e.sender, 'diag:end', { code }); });
-  return { ok: true, cmd: cmd + ' ' + args.join(' ') };
-});
-ipcMain.on('diag:stop', (e) => { const c = diagProcs.get(e.sender.id); if (c) { try { c.kill(); } catch (_) {} diagProcs.delete(e.sender.id); } });
-
-// ---------------------------------------------------------------------------
-// 内蔵ファイルサーバ（TFTP / HTTP / FTP）。サーバはアプリ全体で共有のため、
-// ログ・状態は全ウィンドウへブロードキャストする。
-// ---------------------------------------------------------------------------
-fileserver.setLogger((entry) => broadcastAll('fileserver:log', entry));
-ipcMain.handle('fileserver:start', async (e, { proto, conf }) => {
-  const c = { ...(conf || {}) };
-  if (!c.root) return { ok: false, error: '公開フォルダを選択してください' };
-  try { if (!fs.existsSync(c.root) || !fs.statSync(c.root).isDirectory()) return { ok: false, error: '公開フォルダが存在しません' }; }
-  catch (_) { return { ok: false, error: '公開フォルダを確認できません' }; }
-  const ips = fileserver.localIps();
-  c.advertiseIp = c.advertiseIp || (ips[0] && ips[0].address) || '127.0.0.1';
-  const r = await fileserver.start(proto, c);
-  broadcastAll('fileserver:status', fileserver.status());
-  return r;
-});
-ipcMain.handle('fileserver:stop', (e, { proto }) => { fileserver.stop(proto); broadcastAll('fileserver:status', fileserver.status()); return { ok: true }; });
-ipcMain.handle('fileserver:status', () => ({ status: fileserver.status(), ips: fileserver.localIps() }));
-ipcMain.handle('fileserver:pickDir', async (e) => {
-  const w = BrowserWindow.fromWebContents(e.sender);
-  const r = await dialog.showOpenDialog(w, { title: '公開フォルダを選択', properties: ['openDirectory'] });
-  if (r.canceled || !r.filePaths.length) return { ok: false };
-  return { ok: true, dir: r.filePaths[0] };
-});
-ipcMain.handle('fileserver:openDir', (e, { dir }) => { try { shell.openPath(dir); return { ok: true }; } catch (er) { return { ok: false, error: er.message }; } });
-
-// ---------------------------------------------------------------------------
-// 内蔵ネットワークツールキット（ping sweep / port scan / ARP / SNMP walk）
-// 実行はメイン側で行い、結果を逐次（webContents別）に通知する。
-// ---------------------------------------------------------------------------
-const scanJobs = new Map(); // webContents.id -> 現在実行中ジョブのキャンセル関数
-ipcMain.handle('netscan:run', (e, { kind, params }) => {
-  const wc = e.sender; const wcid = wc.id;
-  const prev = scanJobs.get(wcid); if (prev) { try { prev(); } catch (_) {} scanJobs.delete(wcid); }
-  const ctx = {
-    onResult: (row) => send(wc, 'netscan:result', { kind, row }),
-    onProgress: (p) => send(wc, 'netscan:progress', p),
-    onEnd: (summary) => { if (scanJobs.get(wcid) === cancel) scanJobs.delete(wcid); send(wc, 'netscan:end', { kind, summary }); },
-  };
-  let cancel = () => {};
-  try { cancel = netscan.run(kind, params || {}, ctx) || (() => {}); }
-  catch (er) { return { ok: false, error: er.message }; }
-  scanJobs.set(wcid, cancel);
-  return { ok: true };
-});
-ipcMain.on('netscan:stop', (e) => { const c = scanJobs.get(e.sender.id); if (c) { try { c(); } catch (_) {} scanJobs.delete(e.sender.id); } });
-
-// ---------------------------------------------------------------------------
-// コンフィグ管理（世代保存＋差分）。%APPDATA%\waterm\configs\<key>\<ts>.txt
-// key は機器ごとのフォルダ名（レンダラ側でセッション名/ホストから生成）。
-// ---------------------------------------------------------------------------
-const CONFIG_DIR = path.join(DATA_DIR, 'configs');
-function sanitizeKey(s) { return String(s || 'device').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\.+$/, '').slice(0, 80) || 'device'; }
-ipcMain.handle('config:save', (e, { key, label, content }) => {
-  try {
-    const dir = path.join(CONFIG_DIR, sanitizeKey(key));
-    fs.mkdirSync(dir, { recursive: true });
-    const ts = new Date();
-    const pad = (n, w) => String(n).padStart(w || 2, '0');
-    const stamp = ts.getFullYear() + pad(ts.getMonth() + 1) + pad(ts.getDate()) + '-' + pad(ts.getHours()) + pad(ts.getMinutes()) + pad(ts.getSeconds());
-    const file = stamp + '.txt';
-    // 先頭にメタ行（# で始まるのでconfig本文と区別しやすい）。差分時はこの行を除外する。
-    const header = `# WaTerm config snapshot\n# device: ${key}\n# label: ${label || ''}\n# saved: ${ts.toLocaleString('ja-JP')}\n`;
-    fs.writeFileSync(path.join(dir, file), header + (content || ''), 'utf8');
-    return { ok: true, file, dir };
-  } catch (er) { return { ok: false, error: er.message }; }
-});
-ipcMain.handle('config:listKeys', () => {
-  try {
-    if (!fs.existsSync(CONFIG_DIR)) return { ok: true, keys: [] };
-    const keys = [];
-    for (const k of fs.readdirSync(CONFIG_DIR)) {
-      const d = path.join(CONFIG_DIR, k);
-      try { if (!fs.statSync(d).isDirectory()) continue; const files = fs.readdirSync(d).filter((f) => f.endsWith('.txt')); keys.push({ key: k, count: files.length }); } catch (_) {}
-    }
-    return { ok: true, keys };
-  } catch (er) { return { ok: false, error: er.message }; }
-});
-ipcMain.handle('config:list', (e, { key }) => {
-  try {
-    const dir = path.join(CONFIG_DIR, sanitizeKey(key));
-    if (!fs.existsSync(dir)) return { ok: true, snapshots: [] };
-    const snaps = fs.readdirSync(dir).filter((f) => f.endsWith('.txt')).map((f) => { const st = fs.statSync(path.join(dir, f)); return { file: f, size: st.size, mtime: st.mtimeMs }; }).sort((a, b) => b.file.localeCompare(a.file));
-    return { ok: true, snapshots: snaps };
-  } catch (er) { return { ok: false, error: er.message }; }
-});
-ipcMain.handle('config:read', (e, { key, file }) => {
-  try { const p = path.join(CONFIG_DIR, sanitizeKey(key), path.basename(file)); return { ok: true, content: fs.readFileSync(p, 'utf8') }; }
-  catch (er) { return { ok: false, error: er.message }; }
-});
-ipcMain.handle('config:delete', (e, { key, file }) => {
-  try { fs.unlinkSync(path.join(CONFIG_DIR, sanitizeKey(key), path.basename(file))); return { ok: true }; }
-  catch (er) { return { ok: false, error: er.message }; }
-});
-ipcMain.handle('config:openDir', (e, { key }) => { try { const d = key ? path.join(CONFIG_DIR, sanitizeKey(key)) : CONFIG_DIR; fs.mkdirSync(d, { recursive: true }); shell.openPath(d); return { ok: true }; } catch (er) { return { ok: false, error: er.message }; } });
 
 // ---------------------------------------------------------------------------
 // 描画モード（起動時にsettings.jsonから読む。切替には再起動が必要）
@@ -1517,8 +1140,126 @@ if (PERF_MODE) {
 }
 ipcMain.handle('app:perfMode', () => PERF_MODE);
 
+// ---------------------------------------------------------------------------
+// プラグイン基盤
+//   backend の activate(host) に本体内部を渡す。プラグインは host 経由で
+//   IPC 登録・送信・接続テーブル参照・ウィンドウ破棄時の後始末を行う。
+// ---------------------------------------------------------------------------
+function disabledPluginSet() { const s = readJson(SET_FILE, {}); return new Set(Array.isArray(s.disabledPlugins) ? s.disabledPlugins : []); }
+
+const pluginBackendHost = {
+  // IPC 登録
+  handle: (channel, fn) => ipcMain.handle(channel, fn),
+  on: (channel, fn) => ipcMain.on(channel, fn),
+  removeHandler: (channel) => { try { ipcMain.removeHandler(channel); } catch (_) {} },
+  // 送信
+  send,                                   // send(wc, channel, payload)
+  broadcastAll,                           // broadcastAll(channel, payload)
+  // 接続テーブル
+  conns,
+  getConn: (id) => conns.get(id),
+  wcOf,
+  writeToConn,
+  writeRaw,
+  // ウィンドウ破棄時フック（webContents.id を受け取る）
+  onWindowClosed: (fn) => { windowClosedHooks.push(fn); },
+  // 送受信データ傍受（観測=モニタ / rx消費=ファイル転送）
+  onConnData: (fn) => { connDataObservers.push(fn); },
+  onConnConsumeRx: (fn) => { connRxConsumers.push(fn); },
+  // 本体の状態（プラグインが参照）
+  getPerfMode: () => PERF_MODE,
+  getMainWindow: () => mainWin,
+  // データ保存先・ユーティリティ
+  paths: { data: DATA_DIR, config: path.join(DATA_DIR, 'configs') },
+  readJson, writeJson,
+  // Electron / Node の共有物（プラグインが必要に応じて使う）
+  electron: { app, dialog, shell, BrowserWindow, screen, clipboard, safeStorage },
+  node: { fs, path, os, net, spawn, cp, iconv },
+};
+
+// プラグイン1件のレンダラ用マニフェスト（資産URL/パネルHTML）。file:// で読む。
+function pluginManifest(p) {
+  const assetUrl = (rel) => require('url').pathToFileURL(path.join(p.dir, rel)).href;
+  return {
+    id: p.id,
+    name: p.name,
+    rendererUrl: p.renderer ? assetUrl(p.renderer) : null,
+    styleUrl: p.style ? assetUrl(p.style) : null,
+    panelHtml: p.panel ? (() => { try { return fs.readFileSync(path.join(p.dir, p.panel), 'utf8'); } catch (_) { return null; } })() : null,
+  };
+}
+// 起動時マニフェスト（レンダラのローダ用）。有効プラグインの資産URL/パネルHTMLを返す。
+ipcMain.handle('plugins:manifests', () => {
+  const dis = disabledPluginSet();
+  return pluginHost.discover(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR)
+    .filter((p) => (p.core || !dis.has(p.id)) && (p.renderer || p.panel || p.style))
+    .map(pluginManifest);
+});
+// 管理UI用：全プラグインの一覧＋有効/無効＋組込か否か
+ipcMain.handle('plugins:list', () => {
+  const dis = disabledPluginSet();
+  return pluginHost.discover(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR).map((p) => ({ id: p.id, name: p.name, description: p.description, core: p.core, builtin: p.builtin, archived: p.archived, enabled: p.core || !dis.has(p.id) }));
+});
+// ユーザープラグインのフォルダを OS のファイラで開く
+ipcMain.handle('plugins:openDir', () => {
+  try { fs.mkdirSync(USER_PLUGINS_DIR, { recursive: true }); } catch (_) {}
+  shell.openPath(USER_PLUGINS_DIR);
+  return { ok: true, dir: USER_PLUGINS_DIR };
+});
+// 有効/無効の切替（settings.disabledPlugins を更新。反映は再読み込み）
+ipcMain.handle('plugins:setEnabled', (e, { id, on }) => {
+  const s = readJson(SET_FILE, {});
+  const set = new Set(Array.isArray(s.disabledPlugins) ? s.disabledPlugins : []);
+  if (on) set.delete(id); else set.add(id);
+  s.disabledPlugins = [...set];
+  writeJson(SET_FILE, s);
+  return { ok: true, enabled: on };
+});
+
+// 同梱プラグインを <id>.wtp（単一ファイル）へ seed / バージョン同期（フォルダが正）
+try { pluginHost.syncBundled(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR); } catch (e) { console.error('[plugin] syncBundled 失敗:', e); }
+// 置かれたアーカイブ(.wtp/.zip)を内部キャッシュへ展開してから読み込む
+try { pluginHost.prepareArchives(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR); } catch (e) { console.error('[plugin] prepareArchives 失敗:', e); }
+// backend を読み込む（有効なもののみ activate）。実体フォルダから読む
+pluginHost.loadBackends(pluginBackendHost, disabledPluginSet(), USER_PLUGINS_DIR, PLUGIN_CACHE_DIR);
+
+// 起動時点で存在するプラグイン ID を「投入済み」として記録（ライブ追加の重複防止）
+const loadedPluginIds = new Set(pluginHost.discover(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR).map((p) => p.id));
+
+// プラグインフォルダを監視し、ファイル/フォルダ投入時に再起動なしで反映する。
+//   新規（未投入かつ有効）は backend を activate し、renderer へ資産を送って即注入。
+//   削除/更新は完全反映に再起動が要るため、その旨だけ通知する。
+function refreshPlugins() {
+  try { pluginHost.prepareArchives(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR); } catch (e) { console.error('[plugin] prepareArchives 失敗:', e); }
+  const dis = disabledPluginSet();
+  const cur = pluginHost.discover(USER_PLUGINS_DIR, PLUGIN_CACHE_DIR);
+  const curIds = new Set(cur.map((p) => p.id));
+  const added = [];
+  for (const p of cur) {
+    if (loadedPluginIds.has(p.id)) continue;                 // 既存はスキップ
+    loadedPluginIds.add(p.id);
+    added.push(p.id);
+    const enabled = p.core || !dis.has(p.id);
+    if (!enabled) continue;                                  // 無効なら一覧表示のみ（ロードしない）
+    if (p.backend) {
+      try { const m = require(path.join(p.dir, p.backend)); if (m && typeof m.activate === 'function') m.activate(pluginBackendHost); }
+      catch (e) { console.error('[plugin] ライブ backend 失敗:', p.id, e); }
+    }
+    if (p.renderer || p.panel || p.style) broadcastAll('plugins:liveAdd', pluginManifest(p));
+  }
+  const removed = [...loadedPluginIds].filter((id) => !curIds.has(id));
+  broadcastAll('plugins:changed', { added, removed, needRestart: removed.length > 0 });
+}
+function setupPluginWatcher() {
+  let timer = null;
+  try {
+    fs.watch(USER_PLUGINS_DIR, { persistent: false, recursive: true }, () => {
+      clearTimeout(timer); timer = setTimeout(() => { try { refreshPlugins(); } catch (e) { console.error('[plugin] refresh 失敗:', e); } }, 600);
+    });
+  } catch (e) { console.error('[plugin] フォルダ監視の開始に失敗:', e); }
+}
+
 try { app.setAppUserModelId('jp.waterm.app'); } catch (_) {} // Windowsタスクバーのアイコン紐付け
-app.whenReady().then(() => { createWindow(); initUpdater(); setTimeout(setupUpdater, 3000); });
+app.whenReady().then(() => { createWindow(); initUpdater(); setTimeout(setupUpdater, 3000); setupPluginWatcher(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { try { fileserver.stopAll(); } catch (_) {} });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

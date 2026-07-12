@@ -1,0 +1,9 @@
+{
+  "id": "fileserver",
+  "version": 1,
+  "name": "内蔵ファイルサーバ",
+  "description": "TFTP / HTTP / FTP サーバを内蔵。Cisco の copy tftp/http/ftp や IOS 配布・config 吸い出しに。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

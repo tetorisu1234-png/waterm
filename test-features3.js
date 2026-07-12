@@ -6,8 +6,8 @@
 // すべてループバック(127.0.0.1)で完結。外部ネットワーク不要。
 const assert = require('assert'), fs = require('fs'), os = require('os'), path = require('path');
 const http = require('http'), net = require('net'), dgram = require('dgram');
-const netscan = require('./src/netscan');
-const fsv = require('./src/fileserver');
+const netscan = require('./src/plugins/scan/netscan');
+const fsv = require('./src/plugins/fileserver/fileserver');
 
 let pass = 0, fail = 0;
 function ok(name, cond) { if (cond) { console.log('PASS ', name); pass++; } else { console.log('FAIL ', name); fail++; } }

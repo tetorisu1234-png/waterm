@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data:;" />
   <title>和ターミナル (WaTerm)</title>
   <link rel="stylesheet" href="../../node_modules/xterm/css/xterm.css" />
   <link rel="stylesheet" href="styles.css" />
@@ -24,17 +24,11 @@
       <select id="quickProto" title="プロトコル">
         <option value="ssh">SSH</option>
         <option value="telnet">Telnet</option>
-        <option value="rdp">RDP</option>
       </select>
       <button id="quickBtn">接続</button>
     </div>
     <div class="topbtns">
       <button id="btnSidebar" title="サイドバー (Ctrl+B)">☰</button>
-      <button id="btnSftp" title="SFTPパネル (Ctrl+Shift+S)">📁 SFTP</button>
-      <button id="btnMonitor" title="通信モニタ / パケットキャプチャ">📡 監視</button>
-      <button id="btnServer" title="内蔵ファイルサーバ (TFTP / HTTP / FTP)">🗄 サーバ</button>
-      <button id="btnScan" title="ネットワークスキャン (ping sweep / port / ARP / SNMP)">🔎 スキャン</button>
-      <button id="btnPalette" title="コマンドパレット (Ctrl+K)">⌘ パレット</button>
       <button id="btnTheme" title="テーマ切替">🌓</button>
     </div>
   </div>
@@ -99,14 +93,9 @@
           <button class="lay" data-layout="4" title="4分割">⊞</button>
         </span>
         <button id="btnFind" title="検索 (Ctrl+F)">🔍 検索</button>
-        <button id="btnSync" title="同時入力グループ（複数タブへ一括入力）。Shift+クリックで全タブ一括">⌨ 同時入力</button>
         <button id="btnLog" title="ログ保存">⏺ ログ</button>
         <button id="btnSendFile" title="ファイルの中身を送信">📄 ファイル送信</button>
-        <button id="btnMacro" title="簡易マクロ (expect/send)">🤖 マクロ</button>
-        <button id="btnTransfer" title="ファイル転送 (XMODEM/YMODEM)">⇅ 転送</button>
         <button id="btnBreak" title="Break送信(シリアル)" class="hidden">⎉ Break</button>
-        <button id="btnDiag" title="ネットワーク診断（自分のPCから ping / tracert を実行）">🔧 診断</button>
-        <button id="btnConfig" title="コンフィグ取得・世代保存・差分">📑 Config</button>
         <button id="btnReconnect" title="再接続">⟳ 再接続</button>
         <span id="connState" class="state"></span>
       </div>
@@ -121,63 +110,6 @@
         <div id="sideDock"></div>
       </div>
       <div id="bottomDock">
-      <div id="sftpDock" class="dock-item dock-bottom hidden">
-        <div class="dock-grip" data-dock="sftp" title="ドラッグでサイズ変更"></div>
-      <div id="sftp">
-        <div class="sftp-bar">
-          <button id="sftpUp" title="上の階層">⬆</button>
-          <input id="sftpPath" type="text" />
-          <button id="sftpGo">移動</button>
-          <button id="sftpRefresh">更新</button>
-          <button id="sftpUpload">アップロード</button>
-          <button id="sftpMkdir">新規フォルダ</button>
-          <button id="sftpDockBtn" class="dockbtn" title="表示位置（下／横）を切替">⇥ 横に表示</button>
-        </div>
-        <table class="sftp-table">
-          <thead><tr><th>名前</th><th>サイズ</th><th>更新日時</th><th>権限</th></tr></thead>
-          <tbody id="sftpBody"></tbody>
-        </table>
-        <div id="sftpStatus" class="sftp-status"></div>
-      </div>
-      </div>
-      <div id="monitorDock" class="dock-item dock-bottom hidden">
-        <div class="dock-grip" data-dock="monitor" title="ドラッグでサイズ変更"></div>
-      <div id="monitor">
-        <div class="mon-bar">
-          <button id="monModeSess" class="mon-mode active">セッション通信</button>
-          <button id="monModeCap" class="mon-mode">パケットキャプチャ (tshark)</button>
-          <button id="monDockBtn" class="dockbtn" title="表示位置（下／横）を切替">⇥ 横に表示</button>
-          <span class="mon-sep"></span>
-          <span class="mon-ctl mon-sess-ctl">
-            <button id="monToggle">⏺ 記録開始</button>
-            <input id="monFilter" type="text" placeholder="🔍 文字列で絞り込み" />
-            <label class="chk"><input type="checkbox" id="monAuto" checked /> 自動追尾</label>
-            <button id="monClear">🗑 クリア</button>
-            <button id="monExport">💾 pcap保存</button>
-            <span id="monStat" class="mon-stat"></span>
-          </span>
-          <span class="mon-ctl mon-cap-ctl hidden">
-            <select id="capIface" title="キャプチャするインターフェース"></select>
-            <button id="capRefresh" title="一覧を再取得">⟳</button>
-            <input id="capFilter" type="text" placeholder="表示フィルタ 例: tcp.port==22 || icmp" />
-            <button id="capStart">▶ 開始</button>
-            <button id="capStop" disabled>⏹ 停止</button>
-            <span id="capStat" class="mon-stat"></span>
-          </span>
-        </div>
-        <div class="mon-split">
-          <table class="mon-table mon-sess-ctl">
-            <thead><tr><th>時刻</th><th>方向</th><th>長さ</th><th>プレビュー</th></tr></thead>
-            <tbody id="monBody"></tbody>
-          </table>
-          <table class="mon-table mon-cap-ctl hidden">
-            <thead><tr><th>No.</th><th>時刻</th><th>送信元</th><th>宛先</th><th>プロト</th><th>長さ</th><th>情報</th></tr></thead>
-            <tbody id="capBody"></tbody>
-          </table>
-        </div>
-        <pre id="monHex" class="mon-hex"></pre>
-      </div>
-      </div>
       </div>
       <div id="termpool"></div>
     </main>
@@ -190,7 +122,7 @@
       <div class="modal-body">
         <div class="row"><label>名前</label><input id="fName" type="text" placeholder="例：本番Webサーバー" /></div>
         <div class="row"><label>プロトコル</label>
-          <select id="fProto"><option value="ssh">SSH</option><option value="telnet">Telnet</option><option value="serial">シリアル(コンソール)</option><option value="rdp">RDP (リモートデスクトップ)</option></select>
+          <select id="fProto"><option value="ssh">SSH</option><option value="telnet">Telnet</option><option value="serial">シリアル(コンソール)</option></select>
         </div>
         <div class="row netOnly"><label>ホスト</label><input id="fHost" type="text" placeholder="192.168.10.1 / example.com" /></div>
         <div class="row netOnly"><label>ポート</label><input id="fPort" type="number" value="22" /></div>
@@ -216,15 +148,6 @@
         <div class="row sshOnly keyOnly"><label>パスフレーズ</label><input id="fPhrase" type="password" /></div>
         <div class="row sshOnly adv"><label class="chk"><input type="checkbox" id="fLegacy" /> 古い暗号方式を許可（旧Cisco/古いAP等：dh-group1-sha1, ssh-rsa/dss, aes-cbc, 3des, hmac-sha1/md5）</label></div>
         <div class="row sshOnly adv"><label>踏み台(ProxyJump)</label><select id="fJump"><option value="">なし（直接接続）</option></select></div>
-        <div class="row rdpOnly adv"><label>ドメイン</label><input id="fDomain" type="text" placeholder="(任意) AD ドメイン名" /></div>
-        <div class="row rdpOnly adv"><label>画面</label>
-          <select id="fScreen"><option value="full">全画面</option><option value="window">ウィンドウ</option></select>
-        </div>
-        <div class="row rdpOnly adv"><label>解像度</label><div class="keyrow"><input id="fWidth" type="number" value="1280" style="width:90px" /> <span style="padding-top:5px">×</span> <input id="fHeight" type="number" value="800" style="width:90px" /></div></div>
-        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fClipboard" checked /> クリップボード共有</label></div>
-        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fDrives" /> ローカルドライブ共有</label></div>
-        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fMultimon" /> マルチモニター</label></div>
-        <div class="row rdpOnly adv"><label class="chk"><input type="checkbox" id="fAdmin" /> 管理セッション(/admin)</label></div>
         <div class="row termOnly adv"><label>文字コード</label>
           <select id="fEnc"><option value="utf8">UTF-8</option><option value="shift_jis">Shift_JIS</option><option value="euc-jp">EUC-JP</option></select>
         </div>
@@ -261,218 +184,20 @@
     </div>
   </div>
 
-  <!-- 出力ハイライト設定モーダル -->
-  <div id="hlModal" class="modal hidden">
+  <!-- プラグイン管理 -->
+  <div id="pluginsModal" class="modal hidden">
     <div class="modal-box">
-      <div class="modal-head">出力ハイライト / キーワード通知</div>
+      <div class="modal-head">🧩 プラグイン管理</div>
       <div class="modal-body">
-        <div class="row" style="align-items:flex-start"><label>ルール</label><textarea id="hlText" style="height:170px;font-family:Consolas,monospace" placeholder="1行に1キーワード。受信した出力中の一致箇所を色付けします。&#10;error&#10;%LINK-3-UPDOWN&#10;Down=red&#10;!CRITICAL          ← 行頭の ! で 通知(音＋トースト＋タブ点滅)&#10;!Authentication failed=red"></textarea></div>
-        <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
-          ・1行＝1キーワード（部分一致）。既定は黄色ハイライト<br>
-          ・<b>=色</b> で色指定：yellow / red / green / cyan / magenta / blue（例 <code>Down=red</code>）<br>
-          ・行頭に <b>!</b> を付けると一致時に<b>通知</b>（ビープ音＋トースト＋タブ点滅）<br>
-          ・<b>#</b> で始まる行はコメント。全セッション共通で適用されます
-        </span></div>
-      </div>
-      <div class="modal-foot"><button id="hlCancel">キャンセル</button><button id="hlSave" class="primary">保存</button></div>
-    </div>
-  </div>
-
-  <!-- 簡易マクロモーダル -->
-  <div id="macroModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head">マクロ</div>
-      <div class="modal-body">
-        <div class="row"><label>言語</label>
-          <div class="keyrow" style="flex:1">
-            <select id="macroLang" style="flex:1">
-              <option value="simple">簡易マクロ（wait / send）</option>
-              <option value="ttl">TTL（Tera Term マクロ）</option>
-            </select>
-            <button id="macroLoad" title="ファイルから読み込み（.ttl / .txt）">📂 読込</button>
-          </div>
-        </div>
-        <div class="row" style="align-items:flex-start"><label>スクリプト</label><textarea id="macroScript" style="height:220px;font-family:Consolas,monospace" placeholder='例（Ciscoログイン）:
-wait "Username:"
-sendln "admin"
-wait "Password:"
-sendln "cisco"
-wait "#"
-sendln "show version"'></textarea></div>
-        <div class="row" id="macroHelpSimple"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
-          wait "文字列" … 受信待ち（既定10秒）｜ timeout 秒 … 以降のwait上限<br>
-          send "文字列" … そのまま送信｜ sendln "文字列" … 末尾に改行を付けて送信<br>
-          pause 秒 … 待機｜ print "メモ" … 端末に表示｜ # … コメント<br>
-          エスケープ: \n \r \t \\ \" \xHH が使用可
-        </span></div>
-        <div class="row hidden" id="macroHelpTtl"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
-          Tera Term の .ttl を実行（実用サブセット）。対応: 変数/式・if/elseif/else/endif・while・for/next・do/loop・<br>
-          goto/:label・call/return・break/continue｜ sendln/send/wait/waitln/wait4all/pause/mpause/flushrecv<br>
-          inputbox/passwordbox/getpassword/yesnobox/messagebox/statusbox｜ str2int/int2str/strlen/strcompare/strconcat/copy/strscan ほか<br>
-          ※ connect/ファイル操作などホスト外の命令は未対応（無視）。timeout 変数で wait のタイムアウト秒を指定。
-        </span></div>
-      </div>
-      <div class="modal-foot"><button id="macroCancel">キャンセル</button><button id="macroRun" class="primary">実行</button></div>
-    </div>
-  </div>
-
-  <!-- ファイル転送モーダル -->
-  <div id="xferModal" class="modal hidden">
-    <div class="modal-box small">
-      <div class="modal-head">ファイル転送（XMODEM / YMODEM）</div>
-      <div class="modal-body">
-        <div class="row"><label>プロトコル</label>
-          <select id="xferProto">
-            <option value="xmodem">XMODEM (128B/CRC)</option>
-            <option value="xmodem1k">XMODEM-1K (1KB)</option>
-            <option value="ymodem">YMODEM (ファイル名/複数可)</option>
-            <option value="zmodem">ZMODEM (sz/rz・自動・高速)</option>
-            <option value="kermit">Kermit (Cisco等)</option>
-          </select>
-        </div>
-        <div class="row"><label>方向</label>
-          <select id="xferDir">
-            <option value="recv">受信（相手→このPC：sx/sb/sz 等）</option>
-            <option value="send">送信（このPC→相手：rx/rb/rz 等）</option>
-          </select>
-        </div>
-        <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
-          開始後、相手側（ルータ/サーバ）で対応コマンドを実行してください。<br>
-          XMODEM受信は保存ファイル名を指定、YMODEM受信は保存先フォルダを選びます。
-        </span></div>
-      </div>
-      <div class="modal-foot"><button id="xferCancel">キャンセル</button><button id="xferStart" class="primary">開始</button></div>
-    </div>
-  </div>
-
-  <!-- ネットワーク診断モーダル (ローカル ping / tracert / nslookup) -->
-  <div id="diagModal" class="modal hidden">
-    <div class="modal-box">
-      <div class="modal-head">ネットワーク診断（自分のPCから実行）</div>
-      <div class="modal-body">
-        <div class="row">
-          <label>対象ホスト</label>
-          <div class="keyrow" style="flex:1">
-            <input id="diagHost" type="text" placeholder="192.168.10.1 / example.com" style="flex:1" />
-            <label class="chk" title="ping の回数。0または空で連続(-t)" style="white-space:nowrap">回数 <input id="diagCount" type="number" value="4" min="0" max="1000" style="width:64px" /></label>
-          </div>
-        </div>
-        <div class="row">
-          <label>実行</label>
-          <div class="keyrow" style="flex:1;flex-wrap:wrap">
-            <button id="diagPing" class="primary">📡 Ping</button>
-            <button id="diagTracert">🗺 経路 (tracert)</button>
-            <button id="diagNslookup">🔎 名前解決 (nslookup)</button>
-            <button id="diagStop" disabled>⏹ 停止</button>
-            <button id="diagClear">🗑 クリア</button>
-            <button id="diagCopy">📋 コピー</button>
-          </div>
-        </div>
-        <pre id="diagOut" class="diag-out"></pre>
-      </div>
-      <div class="modal-foot"><button id="diagClose" class="primary">閉じる</button></div>
-    </div>
-  </div>
-
-  <!-- 内蔵ファイルサーバ (TFTP / HTTP / FTP) -->
-  <div id="fsModal" class="modal hidden">
-    <div class="modal-box wide">
-      <div class="modal-head">🗄 内蔵ファイルサーバ（TFTP / HTTP / FTP）</div>
-      <div class="modal-body">
-        <div class="row"><label>公開フォルダ</label>
-          <div class="keyrow" style="flex:1"><input id="fsRoot" type="text" placeholder="配布・受け取りに使うフォルダ" style="flex:1" /><button id="fsPick">参照</button><button id="fsOpen" title="フォルダを開く">📂</button></div>
-        </div>
-        <div class="row"><label>自PCのIP</label><div id="fsIps" class="fs-ips"></div></div>
-        <div class="row"><label>書込/受信</label><label class="chk"><input type="checkbox" id="fsWritable" checked /> アップロード（クライアント→このPC）を許可する</label></div>
-        <table class="fs-table">
-          <thead><tr><th>プロトコル</th><th>ポート</th><th>状態</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr data-proto="tftp"><td>TFTP <span class="muted">(UDP)</span></td><td><input class="fs-port" type="number" value="69" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
-            <tr data-proto="http"><td>HTTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="8080" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
-            <tr data-proto="ftp"><td>FTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="21" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
-          </tbody>
-        </table>
-        <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
-          例: Cisco から <code>copy tftp flash</code> / <code>copy running-config tftp</code> の宛先に上の「自PCのIP」を指定。<br>
-          HTTP はブラウザ/<code>copy http</code> で <code>http://&lt;IP&gt;:ポート/</code> を開くとファイル一覧。ポート69/21は管理者権限が必要な場合があります。
-        </span></div>
-        <pre id="fsLog" class="diag-out" style="height:150px"></pre>
-      </div>
-      <div class="modal-foot"><button id="fsClear">🗑 ログ消去</button><button id="fsClose" class="primary">閉じる</button></div>
-    </div>
-  </div>
-
-  <!-- ネットワークスキャン -->
-  <div id="scanModal" class="modal hidden">
-    <div class="modal-box wide">
-      <div class="modal-head">🔎 ネットワークスキャン</div>
-      <div class="modal-body">
-        <div class="row"><label>種別</label>
-          <select id="scanKind" style="flex:1">
-            <option value="ping">Ping Sweep（サブネット死活確認）</option>
-            <option value="port">ポートスキャン（TCP connect）</option>
-            <option value="arp">ARP テーブル（近傍ホスト）</option>
-            <option value="snmp">SNMP Walk（v2c）</option>
-          </select>
-        </div>
-        <div class="row scan-f scan-ping scan-port scan-snmp"><label id="scanTargetLbl">対象</label><input id="scanTarget" type="text" placeholder="192.168.10.0/24 / 192.168.10.1-50 / 192.168.10.5" style="flex:1" /></div>
-        <div class="row scan-f scan-port"><label>ポート</label><input id="scanPorts" type="text" placeholder="空＝主要ポート / 22,80,443 / 1-1024" style="flex:1" /></div>
-        <div class="row scan-f scan-snmp"><label>コミュニティ</label><input id="scanCommunity" type="text" value="public" style="flex:1" /></div>
-        <div class="row scan-f scan-snmp"><label>OID（基点）</label><input id="scanOid" type="text" value="1.3.6.1.2.1" placeholder="1.3.6.1.2.1.1 = system" style="flex:1" /></div>
-        <div class="row"><label>実行</label>
-          <div class="keyrow" style="flex:1;flex-wrap:wrap">
-            <button id="scanRun" class="primary">▶ 実行</button>
-            <button id="scanStop" disabled>⏹ 停止</button>
-            <button id="scanClear">🗑 クリア</button>
-            <span id="scanProg" class="mon-stat"></span>
-          </div>
-        </div>
-        <div class="scan-result"><table class="mon-table"><thead id="scanHead"></thead><tbody id="scanBody"></tbody></table></div>
-        <div class="row"><label></label><span class="muted" style="font-size:11px">結果の行を右クリック → そのIPでセッション作成。</span></div>
-      </div>
-      <div class="modal-foot"><button id="scanClose" class="primary">閉じる</button></div>
-    </div>
-  </div>
-
-  <!-- コンフィグ管理＆差分 -->
-  <div id="cfgModal" class="modal hidden">
-    <div class="modal-box wide">
-      <div class="modal-head">📑 コンフィグ管理（世代保存＆差分）</div>
-      <div class="modal-body">
-        <div class="row"><label>機器</label>
-          <div class="keyrow" style="flex:1"><select id="cfgKey" style="flex:1"></select><button id="cfgOpenDir" title="保存フォルダを開く">📂</button></div>
-        </div>
-        <div class="row"><label>取得コマンド</label><input id="cfgCmd" type="text" value="show running-config" placeholder="例: show running-config" style="flex:1" /></div>
-        <div class="row"><label>取得オプション</label>
-          <div class="keyrow" style="flex:1;flex-wrap:wrap">
-            <label class="chk" title="Cisco向け：取得前に end で特権EXECへ戻し、terminal length 0 でページ送りを無効化（設定モードからでも取得可）"><input type="checkbox" id="cfgTermLen" checked /> 先に end + terminal length 0（Cisco）</label>
-            <label class="chk" style="white-space:nowrap">無入力 <input id="cfgIdle" type="number" value="1500" min="400" max="20000" style="width:74px" /> ms で確定</label>
-            <button id="cfgCapture" class="primary">⏺ アクティブタブから取得</button>
-            <button id="cfgCaptureSync" title="同時入力グループの全タブから取得">⏺⏺ グループ一括</button>
-          </div>
-        </div>
-        <div class="cfg-cols">
-          <div class="cfg-list-wrap">
-            <div class="muted" style="font-size:11px;margin-bottom:3px">スナップショット（2件選ぶと差分）</div>
-            <ul id="cfgList" class="cfg-list"></ul>
-            <div class="keyrow" style="margin-top:4px;flex-wrap:wrap">
-              <button id="cfgView">表示</button>
-              <button id="cfgDiff" class="primary">差分</button>
-              <button id="cfgDel">削除</button>
-            </div>
-          </div>
-          <pre id="cfgView2" class="cfg-view"></pre>
+        <div class="muted" style="font-size:12px;margin-bottom:8px">機能ごとにプラグインとして分離し、プラグインフォルダで管理しています。各プラグインは <code>&lt;id&gt;.wtp</code>（中身は zip）の単一ファイル。OFFで一時無効化、ファイルを削除すれば完全除去、<code>.wtp</code>/<code>.zip</code> を置けば追加できます（フォルダを直接置いてもOK・同名はフォルダ優先）。変更は要再起動。</div>
+        <div style="margin-bottom:8px"><button id="pluginOpenDirBtn">📂 プラグインフォルダを開く</button></div>
+        <ul id="pluginList" class="plugin-list"></ul>
+        <div id="pluginReload" class="hidden" style="margin-top:10px">
+          <span class="muted" style="font-size:12px">変更を反映するにはアプリの再起動が必要です。</span>
+          <button id="pluginRestartBtn" class="primary">🔄 今すぐ再起動</button>
         </div>
       </div>
-      <div class="modal-foot"><button id="cfgClose" class="primary">閉じる</button></div>
-    </div>
-  </div>
-
-  <!-- コマンドパレット -->
-  <div id="palette" class="palette hidden">
-    <div class="palette-box">
-      <input id="paletteInput" type="text" placeholder="コマンド・セッション・スニペット・履歴を検索…（↑↓ で選択、Enter で実行、Esc で閉じる）" />
-      <ul id="paletteList" class="palette-list"></ul>
+      <div class="modal-foot"><button id="pluginsClose" class="primary">閉じる</button></div>
     </div>
   </div>
 
@@ -495,8 +220,10 @@ sendln "show version"'></textarea></div>
     </div>
   </div>
 
+  <div id="pluginPanels"></div>
+
   <script src="../ttl.js"></script>
-  <script src="features3.js"></script>
+  <script src="plugin-host.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

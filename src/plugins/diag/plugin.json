@@ -1,0 +1,9 @@
+{
+  "id": "diag",
+  "version": 1,
+  "name": "ネットワーク診断",
+  "description": "自分のPCから対象ホストへ ping / tracert / nslookup を実行して結果表示。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

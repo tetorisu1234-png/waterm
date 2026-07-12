@@ -1,0 +1,37 @@
+<!-- 簡易マクロ / TTL モーダル（macro プラグイン） -->
+<div id="macroModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">マクロ</div>
+    <div class="modal-body">
+      <div class="row"><label>言語</label>
+        <div class="keyrow" style="flex:1">
+          <select id="macroLang" style="flex:1">
+            <option value="simple">簡易マクロ（wait / send）</option>
+            <option value="ttl">TTL（Tera Term マクロ）</option>
+          </select>
+          <button id="macroLoad" title="ファイルから読み込み（.ttl / .txt）">📂 読込</button>
+        </div>
+      </div>
+      <div class="row" style="align-items:flex-start"><label>スクリプト</label><textarea id="macroScript" style="height:220px;font-family:Consolas,monospace" placeholder='例（Ciscoログイン）:
+wait "Username:"
+sendln "admin"
+wait "Password:"
+sendln "cisco"
+wait "#"
+sendln "show version"'></textarea></div>
+      <div class="row" id="macroHelpSimple"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+        wait "文字列" … 受信待ち（既定10秒）｜ timeout 秒 … 以降のwait上限<br>
+        send "文字列" … そのまま送信｜ sendln "文字列" … 末尾に改行を付けて送信<br>
+        pause 秒 … 待機｜ print "メモ" … 端末に表示｜ # … コメント<br>
+        エスケープ: \n \r \t \\ \" \xHH が使用可
+      </span></div>
+      <div class="row hidden" id="macroHelpTtl"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+        Tera Term の .ttl を実行（実用サブセット）。対応: 変数/式・if/elseif/else/endif・while・for/next・do/loop・<br>
+        goto/:label・call/return・break/continue｜ sendln/send/wait/waitln/wait4all/pause/mpause/flushrecv<br>
+        inputbox/passwordbox/getpassword/yesnobox/messagebox/statusbox｜ str2int/int2str/strlen/strcompare/strconcat/copy/strscan ほか<br>
+        ※ connect/ファイル操作などホスト外の命令は未対応（無視）。timeout 変数で wait のタイムアウト秒を指定。
+      </span></div>
+    </div>
+    <div class="modal-foot"><button id="macroCancel">キャンセル</button><button id="macroRun" class="primary">実行</button></div>
+  </div>
+</div>

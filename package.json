@@ -1,6 +1,6 @@
 {
   "name": "waterm",
-  "version": "1.7.0",
+  "version": "2.0.0",
   "description": "和ターミナル - 日本語SSH/Telnet/シリアル/RDP/SFTPクライアント",
   "main": "src/main.js",
   "author": "WaTerm",
@@ -10,7 +10,7 @@
     "dist": "electron-builder --win",
     "pack": "electron-builder --dir",
     "check": "node scripts/check-syntax.js",
-    "test": "node test-transfer.js && node test-ttl.js && node test-features3.js && node test-vault.js && node test-vault-flow.js && node test-sshconfig.js",
+    "test": "node test-transfer.js && node test-ttl.js && node test-features3.js && node test-vault.js && node test-vault-flow.js && node test-sshconfig.js && node test-plugin-archive.js",
     "preversion": "npm run check && npm test",
     "version": "node scripts/stamp-version.js && git add package.json",
     "e2e": "playwright test",

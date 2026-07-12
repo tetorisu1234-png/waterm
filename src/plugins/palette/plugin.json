@@ -1,0 +1,8 @@
+{
+  "id": "palette",
+  "version": 1,
+  "name": "コマンドパレット",
+  "description": "Ctrl+K で セッション接続・スニペット・各コマンド・入力履歴を横断してあいまい検索・実行。",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

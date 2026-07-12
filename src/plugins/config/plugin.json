@@ -1,0 +1,9 @@
+{
+  "id": "config",
+  "version": 1,
+  "name": "コンフィグ管理",
+  "description": "show running-config 等を世代保存し、2世代を行差分で比較。同時入力グループで複数台一括取得。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

@@ -1,0 +1,39 @@
+<!-- 通信モニタ / パケットキャプチャ ドックパネル（monitor プラグイン） -->
+<div id="monitorDock" class="dock-item dock-bottom hidden">
+  <div class="dock-grip" data-dock="monitor" title="ドラッグでサイズ変更"></div>
+  <div id="monitor">
+    <div class="mon-bar">
+      <button id="monModeSess" class="mon-mode active">セッション通信</button>
+      <button id="monModeCap" class="mon-mode">パケットキャプチャ (tshark)</button>
+      <button id="monitorDockBtn" class="dockbtn" data-dock="monitor" title="表示位置（下／横）を切替">⇥ 横に表示</button>
+      <span class="mon-sep"></span>
+      <span class="mon-ctl mon-sess-ctl">
+        <button id="monToggle">⏺ 記録開始</button>
+        <input id="monFilter" type="text" placeholder="🔍 文字列で絞り込み" />
+        <label class="chk"><input type="checkbox" id="monAuto" checked /> 自動追尾</label>
+        <button id="monClear">🗑 クリア</button>
+        <button id="monExport">💾 pcap保存</button>
+        <span id="monStat" class="mon-stat"></span>
+      </span>
+      <span class="mon-ctl mon-cap-ctl hidden">
+        <select id="capIface" title="キャプチャするインターフェース"></select>
+        <button id="capRefresh" title="一覧を再取得">⟳</button>
+        <input id="capFilter" type="text" placeholder="表示フィルタ 例: tcp.port==22 || icmp" />
+        <button id="capStart">▶ 開始</button>
+        <button id="capStop" disabled>⏹ 停止</button>
+        <span id="capStat" class="mon-stat"></span>
+      </span>
+    </div>
+    <div class="mon-split">
+      <table class="mon-table mon-sess-ctl">
+        <thead><tr><th>時刻</th><th>方向</th><th>長さ</th><th>プレビュー</th></tr></thead>
+        <tbody id="monBody"></tbody>
+      </table>
+      <table class="mon-table mon-cap-ctl hidden">
+        <thead><tr><th>No.</th><th>時刻</th><th>送信元</th><th>宛先</th><th>プロト</th><th>長さ</th><th>情報</th></tr></thead>
+        <tbody id="capBody"></tbody>
+      </table>
+    </div>
+    <pre id="monHex" class="mon-hex"></pre>
+  </div>
+</div>

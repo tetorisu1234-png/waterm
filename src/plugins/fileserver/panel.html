@@ -1,0 +1,27 @@
+<!-- 内蔵ファイルサーバ (TFTP / HTTP / FTP)（fileserver プラグイン） -->
+<div id="fsModal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">🗄 内蔵ファイルサーバ（TFTP / HTTP / FTP）</div>
+    <div class="modal-body">
+      <div class="row"><label>公開フォルダ</label>
+        <div class="keyrow" style="flex:1"><input id="fsRoot" type="text" placeholder="配布・受け取りに使うフォルダ" style="flex:1" /><button id="fsPick">参照</button><button id="fsOpen" title="フォルダを開く">📂</button></div>
+      </div>
+      <div class="row"><label>自PCのIP</label><div id="fsIps" class="fs-ips"></div></div>
+      <div class="row"><label>書込/受信</label><label class="chk"><input type="checkbox" id="fsWritable" checked /> アップロード（クライアント→このPC）を許可する</label></div>
+      <table class="fs-table">
+        <thead><tr><th>プロトコル</th><th>ポート</th><th>状態</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr data-proto="tftp"><td>TFTP <span class="muted">(UDP)</span></td><td><input class="fs-port" type="number" value="69" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+          <tr data-proto="http"><td>HTTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="8080" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+          <tr data-proto="ftp"><td>FTP <span class="muted">(TCP)</span></td><td><input class="fs-port" type="number" value="21" /></td><td class="fs-state">● 停止</td><td><button class="fs-toggle primary">起動</button></td></tr>
+        </tbody>
+      </table>
+      <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+        例: Cisco から <code>copy tftp flash</code> / <code>copy running-config tftp</code> の宛先に上の「自PCのIP」を指定。<br>
+        HTTP はブラウザ/<code>copy http</code> で <code>http://&lt;IP&gt;:ポート/</code> を開くとファイル一覧。ポート69/21は管理者権限が必要な場合があります。
+      </span></div>
+      <pre id="fsLog" class="diag-out" style="height:150px"></pre>
+    </div>
+    <div class="modal-foot"><button id="fsClear">🗑 ログ消去</button><button id="fsClose" class="primary">閉じる</button></div>
+  </div>
+</div>

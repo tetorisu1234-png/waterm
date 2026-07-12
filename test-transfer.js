@@ -1,7 +1,7 @@
 'use strict';
 // XMODEM/YMODEM 送受信のループバック検証（実機不要）
 const crypto = require('crypto');
-const { startTransfer } = require('./src/transfer');
+const { startTransfer } = require('./src/plugins/transfer/transfer');
 
 function runCase(proto, size) {
   return new Promise((resolve) => {

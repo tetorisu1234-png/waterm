@@ -1,0 +1,20 @@
+<!-- SFTP ドックパネル（sftp プラグイン） -->
+<div id="sftpDock" class="dock-item dock-bottom hidden">
+  <div class="dock-grip" data-dock="sftp" title="ドラッグでサイズ変更"></div>
+  <div id="sftp">
+    <div class="sftp-bar">
+      <button id="sftpUp" title="上の階層">⬆</button>
+      <input id="sftpPath" type="text" />
+      <button id="sftpGo">移動</button>
+      <button id="sftpRefresh">更新</button>
+      <button id="sftpUpload">アップロード</button>
+      <button id="sftpMkdir">新規フォルダ</button>
+      <button id="sftpDockBtn" class="dockbtn" data-dock="sftp" title="表示位置（下／横）を切替">⇥ 横に表示</button>
+    </div>
+    <table class="sftp-table">
+      <thead><tr><th>名前</th><th>サイズ</th><th>更新日時</th><th>権限</th></tr></thead>
+      <tbody id="sftpBody"></tbody>
+    </table>
+    <div id="sftpStatus" class="sftp-status"></div>
+  </div>
+</div>

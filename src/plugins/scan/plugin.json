@@ -1,0 +1,9 @@
+{
+  "id": "scan",
+  "version": 1,
+  "name": "ネットワークスキャン",
+  "description": "Ping Sweep / ポートスキャン / ARP テーブル / SNMP Walk（v2c）。結果からセッション作成。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

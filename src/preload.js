@@ -49,26 +49,6 @@ contextBridge.exposeInMainWorld('api', {
   // マクロ（.ttl 等のテキスト読込）
   loadTextFile: (exts) => ipcRenderer.invoke('dialog:openText', { exts }),
 
-  // 通信モニタ（セッション送受信）
-  monitorToggle: (id, on) => ipcRenderer.invoke('monitor:toggle', { id, on }),
-  monitorState: (id) => ipcRenderer.invoke('monitor:state', { id }),
-  monitorClear: (id) => ipcRenderer.invoke('monitor:clear', { id }),
-  monitorExport: (id) => ipcRenderer.invoke('monitor:export', { id }),
-  onMonitorData: (cb) => ipcRenderer.on('monitor:data', (e, p) => cb(p)),
-
-  // ネットワーク診断（ローカルで ping / tracert / nslookup）
-  diagRun: (kind, host, count) => ipcRenderer.invoke('diag:run', { kind, host, count }),
-  diagStop: () => ipcRenderer.send('diag:stop'),
-  onDiagData: (cb) => ipcRenderer.on('diag:data', (e, p) => cb(p)),
-  onDiagEnd: (cb) => ipcRenderer.on('diag:end', (e, p) => cb(p)),
-
-  // パケットキャプチャ（tshark）
-  captureTshark: () => ipcRenderer.invoke('capture:tshark'),
-  captureInterfaces: () => ipcRenderer.invoke('capture:interfaces'),
-  captureStart: (iface, filter) => ipcRenderer.invoke('capture:start', { iface, filter }),
-  captureStop: () => ipcRenderer.send('capture:stop'),
-  onCapturePacket: (cb) => ipcRenderer.on('capture:packet', (e, p) => cb(p)),
-  onCaptureEnd: (cb) => ipcRenderer.on('capture:end', (e, p) => cb(p)),
 
   // ウィンドウ分離／移動（タブを別ウィンドウへ。座標で移動先を判定）
   relocateTab: (id, session, status, x, y) => ipcRenderer.invoke('window:relocate', { id, session, status, x, y }),
@@ -90,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
   winDevtools: () => ipcRenderer.send('win:devtools'),
   appAbout: () => ipcRenderer.send('app:about'),
   appQuit: () => ipcRenderer.send('app:quit'),
+  appRelaunch: () => ipcRenderer.send('app:relaunch'),
   getPerfMode: () => ipcRenderer.invoke('app:perfMode'),
 
   // 自動更新
@@ -102,11 +83,6 @@ contextBridge.exposeInMainWorld('api', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (e, p) => cb(p)),
   onUpdateError: (cb) => ipcRenderer.on('update:error', (e, p) => cb(p)),
 
-  // ファイル転送プロトコル (XMODEM/YMODEM)
-  transferStart: (id, proto, dir) => ipcRenderer.invoke('transfer:start', { id, proto, dir }),
-  transferAbort: (id) => ipcRenderer.send('transfer:abort', { id }),
-  onTransferDone: (cb) => ipcRenderer.on('transfer:done', (e, p) => cb(p)),
-  onTransferAutostart: (cb) => ipcRenderer.on('transfer:autostart', (e, p) => cb(p)),
   importSshConfig: () => ipcRenderer.invoke('sessions:importSshConfig'),
 
   // SFTP
@@ -127,39 +103,26 @@ contextBridge.exposeInMainWorld('api', {
 
   // シリアル(COM)
   serialList: () => ipcRenderer.invoke('serial:list'),
-  // RDP
-  rdpLaunch: (cfg) => ipcRenderer.invoke('rdp:launch', cfg),
-  rdpEmbed: (id, cfg) => ipcRenderer.invoke('rdp:embed', { id, cfg }),
-  rdpPosition: (id, rect) => ipcRenderer.send('rdp:position', { id, rect }),
-  rdpShow: (id, visible) => ipcRenderer.send('rdp:show', { id, visible }),
-
-  // 内蔵ファイルサーバ（TFTP / HTTP / FTP）
-  fsStart: (proto, conf) => ipcRenderer.invoke('fileserver:start', { proto, conf }),
-  fsStop: (proto) => ipcRenderer.invoke('fileserver:stop', { proto }),
-  fsStatus: () => ipcRenderer.invoke('fileserver:status'),
-  fsPickDir: () => ipcRenderer.invoke('fileserver:pickDir'),
-  fsOpenDir: (dir) => ipcRenderer.invoke('fileserver:openDir', { dir }),
-  onFsLog: (cb) => ipcRenderer.on('fileserver:log', (e, p) => cb(p)),
-  onFsStatus: (cb) => ipcRenderer.on('fileserver:status', (e, p) => cb(p)),
-
-  // 内蔵ネットワークツールキット（ping sweep / port scan / arp / snmp walk）
-  scanRun: (kind, params) => ipcRenderer.invoke('netscan:run', { kind, params }),
-  scanStop: () => ipcRenderer.send('netscan:stop'),
-  onScanResult: (cb) => ipcRenderer.on('netscan:result', (e, p) => cb(p)),
-  onScanProgress: (cb) => ipcRenderer.on('netscan:progress', (e, p) => cb(p)),
-  onScanEnd: (cb) => ipcRenderer.on('netscan:end', (e, p) => cb(p)),
-
-  // コンフィグ管理（世代保存＋差分）
-  configSave: (key, label, content) => ipcRenderer.invoke('config:save', { key, label, content }),
-  configListKeys: () => ipcRenderer.invoke('config:listKeys'),
-  configList: (key) => ipcRenderer.invoke('config:list', { key }),
-  configRead: (key, file) => ipcRenderer.invoke('config:read', { key, file }),
-  configDelete: (key, file) => ipcRenderer.invoke('config:delete', { key, file }),
-  configOpenDir: (key) => ipcRenderer.invoke('config:openDir', { key }),
 
   // ダイアログ等
   pickKey: () => ipcRenderer.invoke('dialog:pickKey'),
   exportSessions: (d) => ipcRenderer.invoke('dialog:exportSessions', d),
   importSessions: () => ipcRenderer.invoke('dialog:importSessions'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+
+  // ===== プラグイン基盤 =====
+  // 汎用ブリッジ：プラグインが任意チャンネルで main と通信するための窓口。
+  // （チャンネル名の名前空間はプラグイン側の責任。第一級アプリなので素通し。）
+  plugin: {
+    invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+    send: (channel, payload) => ipcRenderer.send(channel, payload),
+    on: (channel, cb) => ipcRenderer.on(channel, (e, p) => cb(p)),
+  },
+  // プラグイン管理：一覧取得・有効/無効切替・起動時マニフェスト（資産のURL/HTML）
+  plugins: {
+    manifests: () => ipcRenderer.invoke('plugins:manifests'),
+    list: () => ipcRenderer.invoke('plugins:list'),
+    setEnabled: (id, on) => ipcRenderer.invoke('plugins:setEnabled', { id, on }),
+    openDir: () => ipcRenderer.invoke('plugins:openDir'),
+  },
 });

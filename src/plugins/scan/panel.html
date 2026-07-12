@@ -1,0 +1,31 @@
+<!-- ネットワークスキャン（scan プラグイン） -->
+<div id="scanModal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">🔎 ネットワークスキャン</div>
+    <div class="modal-body">
+      <div class="row"><label>種別</label>
+        <select id="scanKind" style="flex:1">
+          <option value="ping">Ping Sweep（サブネット死活確認）</option>
+          <option value="port">ポートスキャン（TCP connect）</option>
+          <option value="arp">ARP テーブル（近傍ホスト）</option>
+          <option value="snmp">SNMP Walk（v2c）</option>
+        </select>
+      </div>
+      <div class="row scan-f scan-ping scan-port scan-snmp"><label id="scanTargetLbl">対象</label><input id="scanTarget" type="text" placeholder="192.168.10.0/24 / 192.168.10.1-50 / 192.168.10.5" style="flex:1" /></div>
+      <div class="row scan-f scan-port"><label>ポート</label><input id="scanPorts" type="text" placeholder="空＝主要ポート / 22,80,443 / 1-1024" style="flex:1" /></div>
+      <div class="row scan-f scan-snmp"><label>コミュニティ</label><input id="scanCommunity" type="text" value="public" style="flex:1" /></div>
+      <div class="row scan-f scan-snmp"><label>OID（基点）</label><input id="scanOid" type="text" value="1.3.6.1.2.1" placeholder="1.3.6.1.2.1.1 = system" style="flex:1" /></div>
+      <div class="row"><label>実行</label>
+        <div class="keyrow" style="flex:1;flex-wrap:wrap">
+          <button id="scanRun" class="primary">▶ 実行</button>
+          <button id="scanStop" disabled>⏹ 停止</button>
+          <button id="scanClear">🗑 クリア</button>
+          <span id="scanProg" class="mon-stat"></span>
+        </div>
+      </div>
+      <div class="scan-result"><table class="mon-table"><thead id="scanHead"></thead><tbody id="scanBody"></tbody></table></div>
+      <div class="row"><label></label><span class="muted" style="font-size:11px">結果の行を右クリック → そのIPでセッション作成。</span></div>
+    </div>
+    <div class="modal-foot"><button id="scanClose" class="primary">閉じる</button></div>
+  </div>
+</div>

@@ -1,0 +1,16 @@
+<!-- 出力ハイライト設定（highlight プラグイン） -->
+<div id="hlModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">出力ハイライト / キーワード通知</div>
+    <div class="modal-body">
+      <div class="row" style="align-items:flex-start"><label>ルール</label><textarea id="hlText" style="height:170px;font-family:Consolas,monospace" placeholder="1行に1キーワード。受信した出力中の一致箇所を色付けします。&#10;error&#10;%LINK-3-UPDOWN&#10;Down=red&#10;!CRITICAL          ← 行頭の ! で 通知(音＋トースト＋タブ点滅)&#10;!Authentication failed=red"></textarea></div>
+      <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+        ・1行＝1キーワード（部分一致）。既定は黄色ハイライト<br>
+        ・<b>=色</b> で色指定：yellow / red / green / cyan / magenta / blue（例 <code>Down=red</code>）<br>
+        ・行頭に <b>!</b> を付けると一致時に<b>通知</b>（ビープ音＋トースト＋タブ点滅）<br>
+        ・<b>#</b> で始まる行はコメント。全セッション共通で適用されます
+      </span></div>
+    </div>
+    <div class="modal-foot"><button id="hlCancel">キャンセル</button><button id="hlSave" class="primary">保存</button></div>
+  </div>
+</div>

@@ -1,0 +1,8 @@
+{
+  "id": "rdp",
+  "version": 1,
+  "name": "RDP（リモートデスクトップ）",
+  "description": "Windows標準 mstsc を .rdp 生成で起動し、ウィンドウ内に埋め込み表示（koffi FFIで再ペアレント）。高速描画モード時は外部mstscへ自動フォールバック。",
+  "backend": "main.js",
+  "renderer": "renderer.js"
+}

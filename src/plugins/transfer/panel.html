@@ -1,0 +1,28 @@
+<!-- ファイル転送モーダル（transfer プラグイン） -->
+<div id="xferModal" class="modal hidden">
+  <div class="modal-box small">
+    <div class="modal-head">ファイル転送（XMODEM / YMODEM）</div>
+    <div class="modal-body">
+      <div class="row"><label>プロトコル</label>
+        <select id="xferProto">
+          <option value="xmodem">XMODEM (128B/CRC)</option>
+          <option value="xmodem1k">XMODEM-1K (1KB)</option>
+          <option value="ymodem">YMODEM (ファイル名/複数可)</option>
+          <option value="zmodem">ZMODEM (sz/rz・自動・高速)</option>
+          <option value="kermit">Kermit (Cisco等)</option>
+        </select>
+      </div>
+      <div class="row"><label>方向</label>
+        <select id="xferDir">
+          <option value="recv">受信（相手→このPC：sx/sb/sz 等）</option>
+          <option value="send">送信（このPC→相手：rx/rb/rz 等）</option>
+        </select>
+      </div>
+      <div class="row"><label></label><span class="muted" style="font-size:11px;line-height:1.6">
+        開始後、相手側（ルータ/サーバ）で対応コマンドを実行してください。<br>
+        XMODEM受信は保存ファイル名を指定、YMODEM受信は保存先フォルダを選びます。
+      </span></div>
+    </div>
+    <div class="modal-foot"><button id="xferCancel">キャンセル</button><button id="xferStart" class="primary">開始</button></div>
+  </div>
+</div>

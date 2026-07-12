@@ -1,0 +1,8 @@
+{
+  "id": "sftp",
+  "version": 1,
+  "name": "SFTP パネル",
+  "description": "SSH接続上のリモートファイル操作（一覧/DL/UL/リネーム/削除/新規フォルダ）。D&Dアップロード・ローカル即時編集対応。",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

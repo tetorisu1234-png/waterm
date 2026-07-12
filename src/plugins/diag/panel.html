@@ -1,0 +1,28 @@
+<!-- ネットワーク診断 (ローカル ping / tracert / nslookup)（diag プラグイン） -->
+<div id="diagModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">ネットワーク診断（自分のPCから実行）</div>
+    <div class="modal-body">
+      <div class="row">
+        <label>対象ホスト</label>
+        <div class="keyrow" style="flex:1">
+          <input id="diagHost" type="text" placeholder="192.168.10.1 / example.com" style="flex:1" />
+          <label class="chk" title="ping の回数。0または空で連続(-t)" style="white-space:nowrap">回数 <input id="diagCount" type="number" value="4" min="0" max="1000" style="width:64px" /></label>
+        </div>
+      </div>
+      <div class="row">
+        <label>実行</label>
+        <div class="keyrow" style="flex:1;flex-wrap:wrap">
+          <button id="diagPing" class="primary">📡 Ping</button>
+          <button id="diagTracert">🗺 経路 (tracert)</button>
+          <button id="diagNslookup">🔎 名前解決 (nslookup)</button>
+          <button id="diagStop" disabled>⏹ 停止</button>
+          <button id="diagClear">🗑 クリア</button>
+          <button id="diagCopy">📋 コピー</button>
+        </div>
+      </div>
+      <pre id="diagOut" class="diag-out"></pre>
+    </div>
+    <div class="modal-foot"><button id="diagClose" class="primary">閉じる</button></div>
+  </div>
+</div>

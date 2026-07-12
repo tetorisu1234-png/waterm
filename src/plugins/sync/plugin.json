@@ -1,0 +1,7 @@
+{
+  "id": "sync",
+  "version": 1,
+  "name": "同時入力グループ",
+  "description": "複数タブをグループにして、入力を全メンバーへ同時送信。Ciscoフリートの一括設定向け。",
+  "renderer": "renderer.js"
+}

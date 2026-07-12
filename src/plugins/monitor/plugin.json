@@ -1,0 +1,9 @@
+{
+  "id": "monitor",
+  "version": 1,
+  "name": "通信モニタ / パケットキャプチャ",
+  "description": "セッションの送受信バイトを記録・16進表示・pcap保存。tshark連携でNICパケットキャプチャも。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

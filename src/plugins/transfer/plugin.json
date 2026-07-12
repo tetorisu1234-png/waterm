@@ -1,0 +1,9 @@
+{
+  "id": "transfer",
+  "version": 1,
+  "name": "ファイル転送",
+  "description": "XMODEM / XMODEM-1K / YMODEM / ZMODEM / Kermit でのファイル送受信。ZMODEM自動検知にも対応。",
+  "backend": "main.js",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

@@ -1,0 +1,8 @@
+{
+  "id": "macro",
+  "version": 1,
+  "name": "マクロ（簡易 / TTL）",
+  "description": "expect/send の簡易マクロと Tera Term マクロ(.ttl)の実行。受信待ち・送信・分岐等。",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

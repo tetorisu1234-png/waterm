@@ -1,0 +1,8 @@
+{
+  "id": "highlight",
+  "version": 1,
+  "name": "出力ハイライト / 通知",
+  "description": "受信出力中のキーワードを色付け。行頭 ! で一致時に通知（ビープ＋トースト＋タブ点滅）。",
+  "renderer": "renderer.js",
+  "panel": "panel.html"
+}

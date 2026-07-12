@@ -32,7 +32,23 @@ const THEME_DARK = { background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e
 const THEME_LIGHT = { background: '#eff1f5', foreground: '#4c4f69', cursor: '#dc8a78', selectionBackground: '#bcc0cc', black: '#5c5f77', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d', blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#acb0be', brightBlack: '#6c6f85', brightRed: '#d20f39', brightGreen: '#40a02b', brightYellow: '#df8e1d', brightBlue: '#1e66f5', brightMagenta: '#ea76cb', brightCyan: '#179299', brightWhite: '#bcc0cc' };
 const xtermTheme = () => (SETTINGS.theme === 'light' ? THEME_LIGHT : THEME_DARK);
 
-init();
+// プラグインを読み込んでから init()、その後に各プラグインの activate を呼ぶ
+if (window.WT && typeof WT.boot === 'function') WT.boot(init); else init();
+
+// フォルダ監視によるプラグインのライブ反映（再起動不要）
+try {
+  api.plugin.on('plugins:liveAdd', async (m) => {
+    if (window.WT && typeof WT.loadOne === 'function') {
+      const ok = await WT.loadOne(m);
+      if (ok) toast('プラグインを追加: ' + (m.name || m.id));
+    }
+    if (!$('#pluginsModal').classList.contains('hidden')) openPluginManager();
+  });
+  api.plugin.on('plugins:changed', (info) => {
+    if (!$('#pluginsModal').classList.contains('hidden')) openPluginManager();
+    if (info && info.needRestart) toast('削除/更新の完全反映には再起動が必要です');
+  });
+} catch (_) {}
 async function init() {
   DB = (await api.loadSessions()) || { folders: [], sessions: [] };
   if (!DB.sessions) DB.sessions = [];
@@ -41,7 +57,6 @@ async function init() {
   try { const vs = await api.vaultStatus(); if (vs && vs.enabled && !vs.unlocked) await promptUnlock(); } catch (_) {}
   applyTheme();
   $('#sidebar').classList.toggle('collapsed', !SETTINGS.sidebar);
-  HL_RULES = parseHighlightRules(SETTINGS.highlightText);
   renderSessions(); renderSnippets();
   wireUI(); wireMenu(); wireData();
   renderMenuBar();
@@ -139,7 +154,7 @@ function renderSessions() {
       li.ondblclick = () => openSession(s);
       li.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(ev.clientX, ev.clientY, [
         { label: '接続', fn: () => openSession(s) },
-        ...(s.host ? [{ label: '診断 (ping/tracert)', fn: () => openDiag(s.host) }] : []),
+        ...(window.WT ? WT.sessionMenuItems(s) : []),
         { sep: true },
         { label: '編集', fn: () => openEditor(s.id) },
         { label: '複製', fn: () => dupSession(s.id) },
@@ -203,14 +218,17 @@ function openEditor(id) {
   $('#fStopBits').value = s.stopBits || '1';
   $('#fFlow').value = s.flow || 'none';
   // RDP
-  $('#fDomain').value = s.domain || '';
-  $('#fScreen').value = s.fullscreen === false ? 'window' : 'full';
-  $('#fWidth').value = s.width || 1280;
-  $('#fHeight').value = s.height || 800;
-  $('#fClipboard').checked = s.clipboard !== false;
-  $('#fDrives').checked = !!s.drives;
-  $('#fMultimon').checked = !!s.multimon;
-  $('#fAdmin').checked = !!s.adminSession;
+  // RDP編集フィールドは rdp プラグインが注入（無効時は存在しないのでガード）
+  if ($('#fDomain')) {
+    $('#fDomain').value = s.domain || '';
+    $('#fScreen').value = s.fullscreen === false ? 'window' : 'full';
+    $('#fWidth').value = s.width || 1280;
+    $('#fHeight').value = s.height || 800;
+    $('#fClipboard').checked = s.clipboard !== false;
+    $('#fDrives').checked = !!s.drives;
+    $('#fMultimon').checked = !!s.multimon;
+    $('#fAdmin').checked = !!s.adminSession;
+  }
   setAdvOpen(hasAdvancedValues(s)); // 新規は折りたたみ、詳細設定済みなら展開
   updateModalProto();
   $('#modal').classList.remove('hidden');
@@ -298,11 +316,13 @@ async function saveEditor() {
   s.serialPort = $('#fSerialPort').value;
   s.baud = $('#fBaud').value; s.dataBits = $('#fDataBits').value;
   s.parity = $('#fParity').value; s.stopBits = $('#fStopBits').value; s.flow = $('#fFlow').value;
-  s.domain = $('#fDomain').value.trim();
-  s.fullscreen = $('#fScreen').value !== 'window';
-  s.width = Number($('#fWidth').value) || 1280; s.height = Number($('#fHeight').value) || 800;
-  s.clipboard = $('#fClipboard').checked; s.drives = $('#fDrives').checked;
-  s.multimon = $('#fMultimon').checked; s.adminSession = $('#fAdmin').checked;
+  if ($('#fDomain')) {
+    s.domain = $('#fDomain').value.trim();
+    s.fullscreen = $('#fScreen').value !== 'window';
+    s.width = Number($('#fWidth').value) || 1280; s.height = Number($('#fHeight').value) || 800;
+    s.clipboard = $('#fClipboard').checked; s.drives = $('#fDrives').checked;
+    s.multimon = $('#fMultimon').checked; s.adminSession = $('#fAdmin').checked;
+  }
   if ($('#fPass').value) s.passwordStored = await api.encrypt($('#fPass').value);
   if ($('#fPhrase').value) s.phraseStored = await api.encrypt($('#fPhrase').value);
   persistSessions(); renderSessions();
@@ -372,11 +392,8 @@ function buildTermTab(id, session, status) {
   setActive(id);
   setTimeout(() => { try { fit.fit(); } catch (_) {} }, 30);
   term.onData((d) => {
-    recordCmdInput(id, d); // コマンドパレットの履歴用に入力行を蓄積
-    // 同時入力グループ：このタブが同期ONなら、グループ内の全タブへ同じ入力を送る
-    const self = tabs.get(id);
-    if (self && self.syncOn) { for (const o of tabs.values()) { if (o.syncOn && !o.isRdp) api.connInput(o.id, d); } }
-    else api.connInput(id, d);
+    if (window.WT) WT._emitInput(id, d); // プラグイン（コマンド履歴・同時入力ミラー等）へ入力を通知
+    api.connInput(id, d);
   });
   term.onResize(({ cols, rows }) => api.connResize(id, cols, rows));
   return tab;
@@ -392,34 +409,14 @@ function adoptTab(payload) {
   updateTabEl(tab);
   tab.term.writeln('\x1b[90m── 別ウィンドウから移動しました（接続は継続中・スクロールバックは引き継がれません）──\x1b[0m');
   setTimeout(() => { try { tab.fit.fit(); api.connResize(tab.id, tab.term.cols, tab.term.rows); } catch (_) {} }, 60);
-  // 通信モニタの記録状態を引き継ぐ（移動先のボタン表示を合わせる）
-  api.monitorState(tab.id).then((s) => { if (s && s.ok) { tab.monOn = s.on; if (activeId === tab.id && monVisible() && monMode === 'sess') updateMonToggle(); } }).catch(() => {});
+  if (window.WT) WT._tabAdopted(tab); // プラグイン（通信モニタの記録状態引き継ぎ等）へ通知
 }
 async function openSession(s) {
-  // RDP は mstsc を起動してウィンドウ内に埋め込む
-  if (s.protocol === 'rdp') {
-    const id = uid();
-    const wrap = elx('div', 'term-wrap rdp-wrap');
-    wrap.innerHTML = '<div class="rdp-msg">🖥 リモートデスクトップに接続中…</div>';
-    $('#termpool').appendChild(wrap);
-    const tab = { id, term: null, fit: null, search: null, session: s, wrap, tabEl: null, status: 'connecting', sftpCwd: null, logging: false, isRdp: true };
-    tabs.set(id, tab);
-    addTabEl(tab);
-    setActive(id);
-    await new Promise((r) => setTimeout(r, 90)); // レイアウト確定を待つ
-    const cfg = await buildCfg(s, 0, 0);
-    const pr = tab.wrap.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    if (pr.width > 4 && pr.height > 4) { cfg.paneWidth = Math.round(pr.width * dpr); cfg.paneHeight = Math.round(pr.height * dpr); }
-    const res = await api.rdpEmbed(id, cfg);
-    if (res && res.ok && res.embedded) {
-      tab.status = 'connected'; updateTabEl(tab);
-      [200, 700, 1500, 3000].forEach((d) => setTimeout(updateEmbeds, d));
-    } else {
-      closeTab(id);
-      if (res && res.ok) toast('「' + s.name + '」を外部のリモートデスクトップで開きました');
-      else toast('RDP起動に失敗: ' + ((res && res.error) || '不明なエラー'), true);
-    }
+  // プロトコルプラグイン（RDP 等、xterm 以外のタブ種別）が担当する場合は委譲
+  if (window.WT && WT.hasProtocol(s.protocol)) { await WT.openProtocolTab(s); return; }
+  // 端末以外のプロトコルなのにハンドラが無い＝担当プラグインが無効
+  if (['ssh', 'telnet', 'serial', 'shell'].indexOf(s.protocol) < 0) {
+    toast('「' + (s.protocol || '').toUpperCase() + '」を扱うプラグインが無効です（プラグイン管理で有効化）', true);
     return;
   }
   const id = uid();
@@ -555,7 +552,7 @@ function commitTabOrder() {
 // タブをドラッグ移動（接続は維持）。座標から別ウィンドウへ取り込み/新ウィンドウ/その場を判定
 async function relocateTab(id, screenX, screenY) {
   const tab = tabs.get(id); if (!tab) return;
-  if (tab.isRdp) { toast('RDPタブはウィンドウ移動に未対応です', true); return; }
+  if (tab.isEmbed) { toast('RDPタブはウィンドウ移動に未対応です', true); return; }
   const res = await api.relocateTab(id, tab.session, tab.status, screenX, screenY);
   if (!res || !res.ok) { if (res && res.error) toast('移動に失敗: ' + res.error, true); return; }
   if (res.moved) removeTabLocal(id); // 別ウィンドウ/新ウィンドウへ移った → このウィンドウからは撤去
@@ -650,32 +647,19 @@ function renderLayout() {
     setState(at.status);
     $('#btnLog').textContent = at.logging ? '⏹ ログ中' : '⏺ ログ';
     $('#btnBreak').classList.toggle('hidden', at.session.protocol !== 'serial');
-    $('#btnSendFile').classList.toggle('hidden', !!at.isRdp);
-    updateMacroBtn();
-    updateXferBtn();
-    updateSyncBtn();
+    $('#btnSendFile').classList.toggle('hidden', !!at.isEmbed);
   } else setState('');
+  if (window.WT) WT._activeTabChanged();
   setTimeout(() => { refitAll(); updateEmbeds(); }, 30);
-  if (sftpVisible()) sftpRefresh();
-  if (monVisible() && monMode === 'sess') refreshMonitor();
 }
 function refitAll() {
   for (const id of panes) { const t = id && tabs.get(id); if (t && t.fit) { try { t.fit.fit(); } catch (_) {} } }
 }
 function refitActive() { refitAll(); updateEmbeds(); }
 // 埋め込みRDP(mstsc子ウィンドウ)を、表示中のペインに合わせて配置/表示する
+// 埋め込みタブ（RDP等）の位置追従。各プロトコルプラグインがタブに reposition() を持たせる。
 function updateEmbeds() {
-  for (const t of tabs.values()) {
-    if (!t.isRdp) continue;
-    const inPane = !!(t.wrap && t.wrap.closest('#termarea'));
-    const r = t.wrap ? t.wrap.getBoundingClientRect() : null;
-    if (inPane && r && r.width > 4 && r.height > 4) {
-      api.rdpPosition(t.id, { left: r.left, top: r.top, width: r.width, height: r.height, dpr: window.devicePixelRatio || 1, innerH: window.innerHeight });
-      api.rdpShow(t.id, true);
-    } else {
-      api.rdpShow(t.id, false);
-    }
-  }
+  for (const t of tabs.values()) { if (typeof t.reposition === 'function') { try { t.reposition(); } catch (_) {} } }
 }
 function setState(st) {
   const e = $('#connState'); e.className = 'state ' + (st || '');
@@ -700,27 +684,8 @@ function closeTab(id) {
 
 /* ---------------- データ / ステータス受信 ---------------- */
 function wireData() {
-  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (t.macro) t.macro.feed(data); if (t.ttlIo) t.ttlIo.feed(data); if (t.cfgCap) t.cfgCap.feed(data); t.term.write(applyHighlights(data, t)); } });
-  api.onTransferDone(({ id }) => { const t = tabs.get(id); if (t) { t.xferActive = false; if (id === activeId) updateXferBtn(); } });
-  // ZMODEMオートスタート: 相手の sz/sb 検出をmainから受けたら自動で受信を開始（設定でOFF可）。
-  api.onTransferAutostart(async ({ id, proto }) => {
-    if (SETTINGS.autoZmodem === false) return;
-    const t = tabs.get(id); if (!t || t.xferActive) return;
-    toast('⇩ ' + (proto || 'ZMODEM').toUpperCase() + ' を検出：受信を自動開始します');
-    const r = await api.transferStart(id, proto || 'zmodem', 'recv');
-    if (r && r.started) { t.xferActive = true; if (id === activeId) updateXferBtn(); }
-    else if (r && r.error) toast('自動受信を開始できません: ' + r.error, true);
-  });
+  api.onData(({ id, data }) => { const t = tabs.get(id); if (t) { if (window.WT) WT._observeData(data, t); t.term.write(window.WT ? WT._transformData(data, t) : data); } });
   api.onAdoptTab(adoptTab);
-  api.onSftpEditEvent((p) => {
-    if (p && p.ok) { toast('⤴ 保存を検知：' + p.name + ' をアップロードしました'); if (sftpVisible()) $('#sftpStatus').textContent = '⤴ ' + p.name + ' を反映しました (' + new Date().toLocaleTimeString('ja-JP') + ')'; if (sftpVisible()) sftpRefresh(); }
-    else if (p) toast('アップロード失敗（' + p.name + '）: ' + (p.error || ''), true);
-  });
-  api.onDiagData((p) => diagAppend(p.text));
-  api.onDiagEnd((p) => { diagRunning = false; updateDiagButtons(); diagAppend('— 終了' + (p && p.code != null ? '（code ' + p.code + '）' : '') + (p && p.error ? ' ' + p.error : '') + ' —\n'); });
-  api.onMonitorData(onMonitorData);
-  api.onCapturePacket(onCapturePacket);
-  api.onCaptureEnd(onCaptureEnd);
   // 新版あり → アプリ内ダイアログで確認。更新する→DLプログレスバー→完了で適用中表示→自動再起動。
   api.onUpdateAvailable((p) => { updateManual = false; showUpdatePrompt(p.version); });
   api.onUpdateNone((p) => { if (updateManual) toast('お使いのバージョン (v' + (p.version || '') + ') が最新です'); updateManual = false; });
@@ -738,7 +703,7 @@ function wireData() {
     }
     if (status === 'connected') { t.everConnected = true; t.reconnectAttempts = 0; }
     // 自動再接続：一度つながった接続が切れた/エラーになったら再接続（RDPは対象外）
-    if ((status === 'closed' || status === 'error') && t.session && t.session.autoReconnect && t.everConnected && !t.isRdp) {
+    if ((status === 'closed' || status === 'error') && t.session && t.session.autoReconnect && t.everConnected && !t.isEmbed) {
       scheduleReconnect(t);
     }
   });
@@ -775,8 +740,6 @@ function wireTabTools() {
   $('#nlSel').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.newline = e.target.value; api.setNewline(activeId, e.target.value); } };
   $('#echoChk').onchange = (e) => { const t = tabs.get(activeId); if (t) { t.session.localEcho = e.target.checked; api.setLocalEcho(activeId, e.target.checked); } };
   $('#btnFind').onclick = toggleFind;
-  $('#btnDiag').onclick = () => { const t = tabs.get(activeId); openDiag(t && t.session ? (t.session.host || '') : ''); };
-  $('#btnSync').onclick = (e) => { if (e.shiftKey) { syncAll(syncCount() === 0); } else toggleSync(); };
   $('#btnReconnect').onclick = () => { const t = tabs.get(activeId); if (!t) return; const s = t.session; closeTab(activeId); openSession(s); };
   $('#btnLog').onclick = async () => {
     const t = tabs.get(activeId); if (!t) return;
@@ -784,7 +747,7 @@ function wireTabTools() {
     else { const r = await api.logStart(activeId, (t.session.name || 'terminal') + '.log', !!SETTINGS.logTimestamp); if (r && r.ok) { t.logging = true; $('#btnLog').textContent = '⏹ ログ中'; if (t.term) t.term.writeln('\x1b[90m[ログ保存開始' + (SETTINGS.logTimestamp ? '(時刻付き)' : '') + ': ' + r.path + ']\x1b[0m'); } }
   };
   $('#btnSendFile').onclick = async () => {
-    const t = tabs.get(activeId); if (!t || t.isRdp) return;
+    const t = tabs.get(activeId); if (!t || t.isEmbed) return;
     const r = await api.sendFile(activeId);
     if (r && r.ok) toast(r.name + ' を送信中（' + r.lines + '行）');
     else if (r && r.error) toast('ファイル送信に失敗: ' + r.error, true);
@@ -794,524 +757,11 @@ function wireTabTools() {
     const r = await api.serialBreak(activeId);
     if (r && r.ok) toast('Break を送信しました'); else toast('Break送信に失敗: ' + ((r && r.error) || ''), true);
   };
-  $('#btnMacro').onclick = () => { const t = tabs.get(activeId); if (!t || t.isRdp) return; openMacro(); };
-  $('#btnTransfer').onclick = () => {
-    const t = tabs.get(activeId); if (!t || t.isRdp) return;
-    if (t.xferActive) { api.transferAbort(activeId); return; }
-    openTransfer();
-  };
-}
-
-/* ---------------- 簡易マクロ (expect/send) ---------------- */
-// 文字列リテラルのエスケープ展開: \n \r \t \\ \" \xHH
-function macroUnescape(s) {
-  return s.replace(/\\(x[0-9a-fA-F]{2}|.)/g, (m, c) => {
-    if (c === 'n') return '\n'; if (c === 'r') return '\r'; if (c === 't') return '\t';
-    if (c === '0') return '\0'; if (c === '\\') return '\\'; if (c === '"') return '"';
-    if (c[0] === 'x') return String.fromCharCode(parseInt(c.slice(1), 16));
-    return c;
-  });
-}
-// 1行を {cmd, arg} に解釈。引数は "..." または素のトークン
-function macroParseLine(line) {
-  const t = line.trim();
-  if (!t || t.startsWith('#') || t.startsWith(';')) return null;
-  const sp = t.indexOf(' ');
-  const cmd = (sp < 0 ? t : t.slice(0, sp)).toLowerCase();
-  let rest = sp < 0 ? '' : t.slice(sp + 1).trim();
-  let arg = rest;
-  const q = rest.match(/^"((?:[^"\\]|\\.)*)"/);
-  if (q) arg = macroUnescape(q[1]);
-  return { cmd, arg, raw: rest };
-}
-class MacroRunner {
-  constructor(tab, script) {
-    this.tab = tab; this.id = tab.id;
-    this.lines = script.split('\n');
-    this.ip = 0; this.buf = ''; this.waiting = null; this.timer = null; this.stopped = false;
-    this.defaultTimeout = 10000;
-  }
-  log(msg, color) { if (this.tab.term) this.tab.term.writeln('\x1b[' + (color || '35') + 'm[マクロ] ' + msg + '\x1b[0m'); }
-  feed(data) {
-    if (this.stopped || !this.waiting) return;
-    this.buf += data;
-    if (this.buf.length > 65536) this.buf = this.buf.slice(-65536);
-    if (this.buf.indexOf(this.waiting.text) >= 0) {
-      const w = this.waiting; this.waiting = null;
-      if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-      this.buf = '';
-      w.resolve(true);
-    }
-  }
-  stop(reason) {
-    if (this.stopped) return;
-    this.stopped = true;
-    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
-    if (this.waiting) { const w = this.waiting; this.waiting = null; w.resolve(false); }
-    this.log('終了' + (reason ? '：' + reason : ''), '90');
-    if (this.tab.macro === this) this.tab.macro = null;
-    updateMacroBtn();
-  }
-  waitFor(text, timeoutMs) {
-    return new Promise((resolve) => {
-      this.waiting = { text, resolve };
-      if (this.buf.indexOf(text) >= 0) { this.feed(''); return; }
-      this.timer = setTimeout(() => {
-        if (this.waiting) { this.waiting = null; this.log('待機タイムアウト: "' + text + '"', '31'); resolve(false); }
-      }, timeoutMs || this.defaultTimeout);
-    });
-  }
-  async run() {
-    this.log('開始（' + this.lines.filter((l) => macroParseLine(l)).length + 'ステップ）');
-    let curTimeout = this.defaultTimeout;
-    while (this.ip < this.lines.length && !this.stopped) {
-      const p = macroParseLine(this.lines[this.ip]); this.ip++;
-      if (!p) continue;
-      switch (p.cmd) {
-        case 'wait': case 'expect': {
-          if (!p.arg) break;
-          const ok = await this.waitFor(p.arg, curTimeout);
-          if (this.stopped) return;
-          if (!ok) return this.stop('待機失敗で中断');
-          break;
-        }
-        case 'send': api.connInput(this.id, p.arg); break;
-        case 'sendln': api.connInput(this.id, p.arg + '\r'); break;
-        case 'pause': case 'sleep': {
-          const sec = parseFloat(p.raw) || 1;
-          await new Promise((r) => { this.timer = setTimeout(r, sec * 1000); });
-          if (this.stopped) return; break;
-        }
-        case 'timeout': curTimeout = (parseFloat(p.raw) || 10) * 1000; break;
-        case 'print': case 'echo': this.log(p.arg || p.raw, '36'); break;
-        default: this.log('不明なコマンド: ' + p.cmd, '33'); break;
-      }
-    }
-    if (!this.stopped) this.stop('完了');
-  }
-}
-function macroRunning(t) { return !!((t && t.macro && !t.macro.stopped) || (t && t.ttl && !t.ttl.done)); }
-function updateMacroBtn() {
-  const t = tabs.get(activeId);
-  const b = $('#btnMacro'); if (b) { b.textContent = macroRunning(t) ? '⏹ マクロ実行中' : '🤖 マクロ'; b.classList.toggle('hidden', !!(t && t.isRdp)); }
-}
-function updateMacroHelp() {
-  const ttl = $('#macroLang').value === 'ttl';
-  $('#macroHelpSimple').classList.toggle('hidden', ttl);
-  $('#macroHelpTtl').classList.toggle('hidden', !ttl);
-}
-function openMacro() {
-  const t = tabs.get(activeId); if (!t) return;
-  if (t.macro && !t.macro.stopped) { t.macro.stop('ユーザー停止'); return; }
-  if (t.ttl && !t.ttl.done) { stopTtl(t); return; }
-  $('#macroLang').value = (t.session && t.session.macroLang) || SETTINGS.lastMacroLang || 'simple';
-  $('#macroScript').value = (t.session && t.session.macroScript) || SETTINGS.lastMacro || '';
-  updateMacroHelp();
-  $('#macroModal').classList.remove('hidden');
-  $('#macroScript').focus();
-}
-function runMacroFromModal() {
-  const t = tabs.get(activeId); if (!t) { $('#macroModal').classList.add('hidden'); return; }
-  const script = $('#macroScript').value;
-  const lang = $('#macroLang').value;
-  SETTINGS.lastMacro = script; SETTINGS.lastMacroLang = lang; api.saveSettings(SETTINGS);
-  if (t.session) { t.session.macroScript = script; t.session.macroLang = lang; persistSessions(); }
-  $('#macroModal').classList.add('hidden');
-  if (t.macro && !t.macro.stopped) t.macro.stop('再実行');
-  if (t.ttl && !t.ttl.done) stopTtl(t);
-  if (lang === 'ttl') { runTtl(t, script); return; }
-  t.macro = new MacroRunner(t, script);
-  updateMacroBtn();
-  t.macro.run();
-}
-
-/* ---------------- TTL (Tera Term マクロ) ---------------- */
-function makeTtlIo(tab) {
-  let buf = ''; let waiter = null;
-  const io = {
-    feed(data) { buf += data; if (buf.length > 65536) buf = buf.slice(-65536); if (waiter) waiter.check(); },
-    cancel() { if (waiter) { clearTimeout(waiter.timer); const w = waiter; waiter = null; w.resolve({ index: 0, matched: '' }); } },
-    async send(s) { api.connInput(tab.id, s); },
-    async wait(pats, to) {
-      return new Promise((resolve) => {
-        const check = () => {
-          for (let i = 0; i < pats.length; i++) { const j = pats[i] ? buf.indexOf(pats[i]) : -1; if (j >= 0) { buf = buf.slice(j + pats[i].length); if (waiter) clearTimeout(waiter.timer); waiter = null; resolve({ index: i + 1, matched: pats[i] }); return true; } }
-          return false;
-        };
-        if (check()) return;
-        const timer = setTimeout(() => { waiter = null; resolve({ index: 0, matched: '' }); }, Math.max(1, to) * 1000);
-        waiter = { resolve, timer, check };
-      });
-    },
-    async pause(ms) { await new Promise((r) => setTimeout(r, Math.max(0, ms || 0))); },
-    async flush() { buf = ''; },
-    async sendBreak() { if (tab.session && tab.session.protocol === 'serial') await api.serialBreak(tab.id); },
-    async message(m, ti) { try { window.alert((ti ? '[' + ti + '] ' : '') + m); } catch (_) {} },
-    async status(m) { setState(String(m)); },
-    async inputbox(m, ti, d) { return await askText(m || '入力', { value: d || '' }); },
-    async passwordbox(m, ti) { return await askText(m || 'パスワード', { password: true }); },
-    async yesno(m, ti) { return window.confirm((ti ? '[' + ti + '] ' : '') + m) ? 1 : 0; },
-    log(msg) { if (tab.term) tab.term.writeln('\x1b[35m[TTL] ' + msg + '\x1b[0m'); },
-  };
-  return io;
-}
-function runTtl(tab, script) {
-  if (typeof TtlInterpreter === 'undefined') { toast('TTLエンジンが読み込まれていません', true); return; }
-  const io = makeTtlIo(tab);
-  tab.ttlIo = io;
-  const interp = new TtlInterpreter(io, script, { defaultTimeout: 30, rand: Math.random });
-  tab.ttl = { interp, done: false };
-  if (tab.term) tab.term.writeln('\x1b[35m[TTL] マクロを開始します\x1b[0m');
-  updateMacroBtn();
-  interp.run().then((r) => {
-    tab.ttl.done = true; tab.ttlIo = null;
-    if (tab.term) {
-      if (r.ok) tab.term.writeln('\x1b[32m[TTL] 完了しました\x1b[0m');
-      else tab.term.writeln('\x1b[31m[TTL] エラー(' + (r.line || '?') + '行目): ' + r.error + '\x1b[0m');
-    }
-    if (activeId === tab.id) updateMacroBtn();
-  });
-}
-function stopTtl(tab) {
-  if (!tab.ttl || tab.ttl.done) return;
-  try { tab.ttl.interp.stop(); } catch (_) {}
-  try { if (tab.ttlIo) tab.ttlIo.cancel(); } catch (_) {}
-  tab.ttl.done = true; tab.ttlIo = null;
-  if (tab.term) tab.term.writeln('\x1b[90m[TTL] 停止しました\x1b[0m');
-  updateMacroBtn();
-}
-
-/* ---------------- 同時入力グループ (Sync Input) ---------------- */
-// グループに参加しているタブ数
-function syncCount() { let n = 0; for (const t of tabs.values()) if (t.syncOn) n++; return n; }
-// アクティブタブのグループ参加/離脱をトグル
-function toggleSync() {
-  const t = tabs.get(activeId); if (!t || t.isRdp) return;
-  t.syncOn = !t.syncOn;
-  updateTabEl(t); updateSyncBtn();
-  const n = syncCount();
-  if (t.syncOn) toast('⌨ このタブを同時入力グループに追加しました（' + n + 'タブ）。入力が全メンバーへ同時送信されます');
-  else toast('このタブを同時入力グループから外しました' + (n ? '（残り' + n + 'タブ）' : ''));
-}
-// 開いている全タブをまとめてグループへ追加/解除
-function syncAll(on) {
-  let n = 0; for (const t of tabs.values()) { if (t.isRdp) continue; t.syncOn = on; if (on) n++; updateTabEl(t); }
-  updateSyncBtn();
-  toast(on ? ('⌨ ' + n + 'タブを同時入力グループに追加しました') : '同時入力グループを解除しました');
-}
-function updateSyncBtn() {
-  const t = tabs.get(activeId);
-  const b = $('#btnSync'); if (!b) return;
-  const on = !!(t && t.syncOn); const n = syncCount();
-  b.classList.toggle('hidden', !!(t && t.isRdp));
-  b.classList.toggle('on', on);
-  b.textContent = (on || n) ? ('⌨ 同時入力 (' + n + ')') : '⌨ 同時入力';
-  b.title = on ? 'このタブはグループに参加中（クリックで解除）。Shift+クリックで全タブ一括' : '同時入力グループに追加（複数タブへ一括入力）。Shift+クリックで全タブ一括';
-}
-
-/* ---------------- ファイル転送 (XMODEM/YMODEM) ---------------- */
-function updateXferBtn() {
-  const t = tabs.get(activeId);
-  const b = $('#btnTransfer'); if (!b) return;
-  b.textContent = (t && t.xferActive) ? '⏹ 転送中止' : '⇅ 転送';
-  b.classList.toggle('hidden', !!(t && t.isRdp));
-}
-function openTransfer() {
-  const t = tabs.get(activeId); if (!t) return;
-  $('#xferProto').value = SETTINGS.lastXferProto || 'xmodem';
-  $('#xferDir').value = SETTINGS.lastXferDir || 'recv';
-  $('#xferModal').classList.remove('hidden');
-}
-async function startTransferFromModal() {
-  const t = tabs.get(activeId); if (!t) { $('#xferModal').classList.add('hidden'); return; }
-  const proto = $('#xferProto').value, dir = $('#xferDir').value;
-  SETTINGS.lastXferProto = proto; SETTINGS.lastXferDir = dir; api.saveSettings(SETTINGS);
-  $('#xferModal').classList.add('hidden');
-  const r = await api.transferStart(activeId, proto, dir);
-  if (r && r.started) { t.xferActive = true; updateXferBtn(); }
-  else if (r && r.error) toast('転送を開始できません: ' + r.error, true);
-}
-/* ---------------- ネットワーク診断 (ローカル ping / tracert / nslookup) ---------------- */
-let diagRunning = false;
-function openDiag(host) {
-  $('#diagHost').value = host || '';
-  if (SETTINGS.diagCount != null) $('#diagCount').value = SETTINGS.diagCount;
-  $('#diagModal').classList.remove('hidden');
-  diagRunning = false; updateDiagButtons();
-  if (!host) $('#diagHost').focus();
-}
-function diagAppend(t) { const el = $('#diagOut'); if (!el) return; el.textContent += t; el.scrollTop = el.scrollHeight; }
-function updateDiagButtons() {
-  $('#diagStop').disabled = !diagRunning;
-  ['#diagPing', '#diagTracert', '#diagNslookup'].forEach((s) => { const b = $(s); if (b) b.disabled = diagRunning; });
-}
-async function runDiag(kind) {
-  if (diagRunning) return;
-  const host = $('#diagHost').value.trim();
-  if (!host) { toast('対象ホストを入力してください', true); $('#diagHost').focus(); return; }
-  const count = $('#diagCount').value;
-  SETTINGS.diagCount = count; saveSettings();
-  const label = kind === 'ping' ? 'ping' : kind === 'tracert' ? 'tracert' : 'nslookup';
-  diagAppend((($('#diagOut').textContent) ? '\n' : '') + '$ ' + label + ' ' + host + '\n');
-  // 先に実行中フラグを立てる（短時間で終わる nslookup 等で diag:end が先着しても矛盾しないように）
-  diagRunning = true; updateDiagButtons();
-  const r = await api.diagRun(kind, host, count);
-  if (!(r && r.ok)) { diagRunning = false; updateDiagButtons(); diagAppend('[エラー] ' + ((r && r.error) || '実行できませんでした') + '\n'); }
 }
 
 /* 検索 */
 function toggleFind() { const fb = $('#findbar'); fb.classList.toggle('hidden'); if (!fb.classList.contains('hidden')) $('#findInput').focus(); }
 function doFind(dir) { const t = tabs.get(activeId); if (!t || !t.search) return; const q = $('#findInput').value; if (!q) return; if (dir < 0) t.search.findPrevious(q); else t.search.findNext(q); }
-
-/* ---------------- 通信モニタ / パケットキャプチャ ---------------- */
-let monMode = 'sess';
-let capturing = false, capCount = 0, ifacesLoaded = false;
-const MON_VIEW_MAX = 3000; // 一覧に保持するDOM行の上限（記録自体は別途20000フレームまで保持）
-function monVisible() { return !$('#monitorDock').classList.contains('hidden'); }
-function b64ToBytes(b64) { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
-function monClock(ts) { const d = new Date(ts); const p = (x, n) => String(x).padStart(n || 2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3); }
-function asciiPreview(bytes, max) { let s = ''; const n = Math.min(bytes.length, max || 80); for (let i = 0; i < n; i++) { const c = bytes[i]; s += (c >= 0x20 && c < 0x7f) ? String.fromCharCode(c) : '.'; } if (bytes.length > n) s += '…'; return s; }
-function hexDump(bytes) {
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 16) {
-    const slice = bytes.subarray(i, i + 16);
-    let hex = '', asc = '';
-    for (let j = 0; j < 16; j++) {
-      if (j < slice.length) { hex += slice[j].toString(16).padStart(2, '0') + ' '; const c = slice[j]; asc += (c >= 0x20 && c < 0x7f) ? String.fromCharCode(c) : '.'; }
-      else hex += '   ';
-      if (j === 7) hex += ' ';
-    }
-    out += i.toString(16).padStart(6, '0') + '  ' + hex + ' |' + asc + '|\n';
-  }
-  return out || '(空)';
-}
-function wireMonitor() {
-  $('#monModeSess').onclick = () => switchMonMode('sess');
-  $('#monModeCap').onclick = () => switchMonMode('cap');
-  $('#monToggle').onclick = monToggleRec;
-  $('#monClear').onclick = async () => { const t = tabs.get(activeId); if (!t) return; await api.monitorClear(activeId); t.monFrames = []; t.monTx = 0; t.monRx = 0; $('#monBody').innerHTML = ''; $('#monHex').textContent = ''; updateMonStat(); };
-  $('#monExport').onclick = async () => { if (!activeId) return; const r = await api.monitorExport(activeId); if (r && r.ok) toast('保存しました: ' + r.path + ' (' + r.frames + 'フレーム)'); else if (r && r.error) toast('保存できません: ' + r.error, true); };
-  $('#monFilter').oninput = renderMonAll;
-  $('#capRefresh').onclick = loadInterfaces;
-  $('#capStart').onclick = startCapture;
-  $('#capStop').onclick = () => api.captureStop();
-}
-function toggleMonitor() {
-  $('#monitorDock').classList.toggle('hidden');
-  if (monVisible()) { if (monMode === 'sess') refreshMonitor(); else if (!ifacesLoaded) loadInterfaces(); }
-  setTimeout(refitActive, 50);
-}
-function switchMonMode(mode) {
-  monMode = mode;
-  $('#monModeSess').classList.toggle('active', mode === 'sess');
-  $('#monModeCap').classList.toggle('active', mode === 'cap');
-  document.querySelectorAll('.mon-sess-ctl').forEach((e) => e.classList.toggle('hidden', mode !== 'sess'));
-  document.querySelectorAll('.mon-cap-ctl').forEach((e) => e.classList.toggle('hidden', mode !== 'cap'));
-  $('#monHex').classList.toggle('hidden', mode !== 'sess');
-  if (mode === 'sess') refreshMonitor();
-  else if (!ifacesLoaded) loadInterfaces();
-}
-// --- セッション通信モニタ ---
-async function monToggleRec() {
-  const t = tabs.get(activeId); if (!t) { toast('アクティブな接続がありません', true); return; }
-  const r = await api.monitorToggle(activeId, !t.monOn);
-  if (r && r.ok) { t.monOn = r.on; updateMonToggle(); } else if (r && r.error) toast(r.error, true);
-}
-function updateMonToggle() {
-  const t = tabs.get(activeId);
-  const b = $('#monToggle');
-  const on = !!(t && t.monOn);
-  b.textContent = on ? '⏹ 記録停止' : '⏺ 記録開始';
-  b.style.background = on ? 'var(--danger)' : '';
-  b.style.color = on ? '#fff' : '';
-  updateMonStat();
-}
-function updateMonStat() {
-  const t = tabs.get(activeId);
-  const frames = t && t.monFrames ? t.monFrames.length : 0;
-  const tx = (t && t.monTx) || 0, rx = (t && t.monRx) || 0;
-  $('#monStat').textContent = (t ? '' : '接続なし ') + frames + 'フレーム  ▲' + fmtSize(tx) + ' ▼' + fmtSize(rx);
-}
-function refreshMonitor() { const t = tabs.get(activeId); if (t && !t.monFrames) t.monFrames = []; updateMonToggle(); renderMonAll(); $('#monHex').textContent = ''; }
-function monRowMatches(fr, q) { if (!q) return true; return asciiPreview(fr.bytes, 4096).toLowerCase().includes(q); }
-function appendMonRow(fr, idx) {
-  const q = $('#monFilter').value.trim().toLowerCase();
-  if (!monRowMatches(fr, q)) return;
-  const tr = elx('tr'); tr.dataset.idx = idx;
-  tr.innerHTML = '<td>' + monClock(fr.ts) + '</td><td class="' + fr.dir + '">' + (fr.dir === 'tx' ? '▲送信' : '▼受信') + '</td><td>' + fr.len + '</td><td>' + escapeHtml(asciiPreview(fr.bytes, 120)) + '</td>';
-  tr.onclick = () => { document.querySelectorAll('#monBody tr.sel').forEach((e) => e.classList.remove('sel')); tr.classList.add('sel'); $('#monHex').textContent = hexDump(fr.bytes); };
-  const tb = $('#monBody');
-  tb.appendChild(tr);
-  while (tb.children.length > MON_VIEW_MAX) tb.removeChild(tb.firstChild);
-  if ($('#monAuto').checked) tb.parentElement.scrollTop = tb.parentElement.scrollHeight;
-}
-function renderMonAll() {
-  const body = $('#monBody'); body.innerHTML = '';
-  const t = tabs.get(activeId); if (!t || !t.monFrames) { updateMonStat(); return; }
-  const q = $('#monFilter').value.trim().toLowerCase();
-  const matched = [];
-  for (let i = 0; i < t.monFrames.length; i++) if (monRowMatches(t.monFrames[i], q)) matched.push(i);
-  for (let k = Math.max(0, matched.length - MON_VIEW_MAX); k < matched.length; k++) appendMonRow(t.monFrames[matched[k]], matched[k]);
-  updateMonStat();
-}
-function onMonitorData(p) {
-  const t = tabs.get(p.id); if (!t) return;
-  if (!t.monFrames) t.monFrames = [];
-  const fr = { dir: p.dir, ts: p.ts, len: p.len, bytes: b64ToBytes(p.b64) };
-  t.monFrames.push(fr);
-  if (fr.dir === 'tx') t.monTx = (t.monTx || 0) + fr.len; else t.monRx = (t.monRx || 0) + fr.len;
-  if (t.monFrames.length > 20000) t.monFrames.shift();
-  if (p.id === activeId && monVisible() && monMode === 'sess') { appendMonRow(fr, t.monFrames.length - 1); updateMonStat(); }
-}
-function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-
-/* ---------------- 出力ハイライト / キーワード通知 ---------------- */
-const HL_COLORS = { yellow: '\x1b[30;43m', red: '\x1b[37;41m', green: '\x1b[30;42m', cyan: '\x1b[30;46m', magenta: '\x1b[30;45m', blue: '\x1b[37;44m' };
-let HL_RULES = [];
-function parseHighlightRules(text) {
-  const out = [];
-  for (const raw of String(text || '').split('\n')) {
-    let line = raw.trim(); if (!line || line.startsWith('#')) continue;
-    let notify = false;
-    if (line[0] === '!') { notify = true; line = line.slice(1).trim(); }
-    let color = notify ? 'red' : 'yellow';
-    const m = line.match(/^(.*?)\s*=\s*(yellow|red|green|cyan|magenta|blue)$/i);
-    if (m) { line = m[1].trim(); color = m[2].toLowerCase(); }
-    if (line) {
-      let re = null; try { re = new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'); } catch (_) {}
-      out.push({ kw: line, notify, ansi: HL_COLORS[color] || HL_COLORS.yellow, re });
-    }
-  }
-  return out;
-}
-function applyHighlights(data, t) {
-  if (!HL_RULES.length || !data) return data;
-  let out = data;
-  for (const r of HL_RULES) {
-    if (!r.re) continue; // 正規表現は parseHighlightRules で事前コンパイル済み（チャンク毎の再コンパイルを回避）
-    const before = out;
-    out = out.replace(r.re, (mm) => r.ansi + mm + '\x1b[0m');
-    if (out !== before && r.notify) notifyMatch(t, r.kw);
-  }
-  return out;
-}
-let _beepCtx = null;
-function beep() { try { _beepCtx = _beepCtx || new (window.AudioContext || window.webkitAudioContext)(); const o = _beepCtx.createOscillator(), g = _beepCtx.createGain(); o.connect(g); g.connect(_beepCtx.destination); o.frequency.value = 880; g.gain.value = 0.06; o.start(); setTimeout(() => { try { o.stop(); } catch (_) {} }, 130); } catch (_) {} }
-function notifyMatch(t, kw) {
-  const now = Date.now();
-  if (t._lastNotify && now - t._lastNotify < 1500) return;
-  t._lastNotify = now;
-  beep();
-  toast('🔔 ' + (t.session ? t.session.name : '') + '：「' + kw + '」を検知');
-  if (t.tabEl) { t.tabEl.classList.remove('flash'); void t.tabEl.offsetWidth; t.tabEl.classList.add('flash'); setTimeout(() => { if (t.tabEl) t.tabEl.classList.remove('flash'); }, 1700); }
-}
-function openHighlight() { $('#hlText').value = SETTINGS.highlightText || ''; $('#hlModal').classList.remove('hidden'); $('#hlText').focus(); }
-function saveHighlight() { SETTINGS.highlightText = $('#hlText').value; HL_RULES = parseHighlightRules(SETTINGS.highlightText); saveSettings(); $('#hlModal').classList.add('hidden'); toast('ハイライト設定を保存（' + HL_RULES.length + '件）'); }
-// --- パケットキャプチャ (tshark) ---
-async function loadInterfaces() {
-  const sel = $('#capIface'); sel.innerHTML = '';
-  $('#capStat').textContent = '取得中…';
-  const r = await api.captureInterfaces();
-  if (!r || !r.ok) { $('#capStat').textContent = (r && r.error) || 'tshark を実行できません'; ifacesLoaded = false; return; }
-  ifacesLoaded = true;
-  for (const it of r.interfaces) { const o = document.createElement('option'); o.value = it.id; o.textContent = it.id + ': ' + it.name; sel.appendChild(o); }
-  $('#capStat').textContent = r.interfaces.length + ' 個のインターフェース';
-}
-async function startCapture() {
-  if (capturing) return;
-  const iface = $('#capIface').value; if (!iface) { toast('インターフェースを選択してください', true); return; }
-  const filter = $('#capFilter').value;
-  $('#capBody').innerHTML = ''; capCount = 0;
-  const r = await api.captureStart(iface, filter);
-  if (!r || !r.ok) { $('#capStat').textContent = (r && r.error) || '開始できません'; return; }
-  capturing = true; $('#capStart').disabled = true; $('#capStop').disabled = false; $('#capStat').textContent = 'キャプチャ中…';
-}
-function onCapturePacket(p) {
-  capCount++;
-  const tr = elx('tr');
-  tr.innerHTML = '<td>' + (p.no || '') + '</td><td>' + (p.time || '') + '</td><td>' + escapeHtml(p.src || '') + '</td><td>' + escapeHtml(p.dst || '') + '</td><td>' + escapeHtml(p.proto || '') + '</td><td>' + (p.len || '') + '</td><td>' + escapeHtml(p.info || '') + '</td>';
-  const body = $('#capBody'); body.appendChild(tr);
-  while (body.children.length > 5000) body.removeChild(body.firstChild);
-  if ($('#monAuto').checked) body.parentElement.scrollTop = body.parentElement.scrollHeight;
-  if (capCount % 10 === 0 || capCount < 10) $('#capStat').textContent = 'キャプチャ中… ' + capCount + ' パケット';
-}
-function onCaptureEnd(p) {
-  capturing = false; $('#capStart').disabled = false; $('#capStop').disabled = true;
-  $('#capStat').textContent = (p && p.error) ? ('停止: ' + p.error.split(/\r?\n/)[0]) : ('停止 (' + capCount + ' パケット)');
-}
-
-/* ---------------- SFTP ---------------- */
-function sftpVisible() { return !$('#sftpDock').classList.contains('hidden'); }
-async function sftpRefresh() {
-  const t = tabs.get(activeId);
-  const body = $('#sftpBody'); body.innerHTML = '';
-  if (!t) { $('#sftpStatus').textContent = 'タブがありません'; return; }
-  if (t.session.protocol !== 'ssh') { $('#sftpStatus').textContent = 'SFTPはSSH接続でのみ利用できます'; return; }
-  if (!t.sftpCwd) { const rp = await api.sftpRealpath(activeId, '.'); t.sftpCwd = (typeof rp === 'string') ? rp : '/'; }
-  $('#sftpPath').value = t.sftpCwd;
-  const list = await api.sftpList(activeId, t.sftpCwd);
-  if (list && list.error) { $('#sftpStatus').textContent = 'エラー: ' + list.error; return; }
-  for (const it of list) {
-    const tr = document.createElement('tr');
-    const nm = elx('td', it.isDir ? 'dir' : null, (it.isDir ? '📁 ' : it.isLink ? '🔗 ' : '📄 ') + it.name);
-    tr.appendChild(nm);
-    tr.appendChild(elx('td', null, it.isDir ? '' : fmtSize(it.size)));
-    tr.appendChild(elx('td', null, fmtTime(it.mtime)));
-    tr.appendChild(elx('td', null, it.perms || ''));
-    const full = (t.sftpCwd.replace(/\/$/, '') || '') + '/' + it.name;
-    if (it.isDir) tr.dataset.dir = full; // フォルダへのドロップ先
-    tr.ondblclick = () => { if (it.isDir) { t.sftpCwd = full; sftpRefresh(); } else { api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }); } };
-    tr.oncontextmenu = (ev) => { ev.preventDefault(); showMenu(ev.clientX, ev.clientY, [
-      it.isDir ? { label: '開く', fn: () => { t.sftpCwd = full; sftpRefresh(); } } : { label: 'ダウンロード', fn: () => api.sftpDownload(activeId, full, it.name).then((r) => { if (r && r.ok) $('#sftpStatus').textContent = '保存: ' + r.path; }) },
-      ...(it.isDir ? [] : [{ label: '編集（ローカルで開く・保存で自動反映）', fn: () => sftpEditFile(full, it.name) }]),
-      { label: 'リネーム', fn: async () => { const nn = await askText('新しい名前', { value: it.name }); if (nn) { const r = await api.sftpRename(activeId, full, t.sftpCwd.replace(/\/$/, '') + '/' + nn); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } } },
-      { label: '削除', fn: async () => { if (confirm(it.name + ' を削除しますか？')) { const r = await api.sftpDelete(activeId, full, it.isDir); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } } },
-    ]); };
-    body.appendChild(tr);
-  }
-  $('#sftpStatus').textContent = `${list.length} 項目 — ${t.sftpCwd}`;
-}
-function sftpUp() { const t = tabs.get(activeId); if (!t || !t.sftpCwd) return; const p = t.sftpCwd.replace(/\/+$/, ''); const parent = p.substring(0, p.lastIndexOf('/')) || '/'; t.sftpCwd = parent; sftpRefresh(); }
-// 即時編集：リモートファイルをローカルの既定エディタで開く（以後は保存するたび自動で再アップロード）
-async function sftpEditFile(remotePath, name) {
-  if (!activeId) return;
-  $('#sftpStatus').textContent = '「' + name + '」をローカルで開いています…';
-  const r = await api.sftpEdit(activeId, remotePath, name);
-  if (r && r.ok) {
-    $('#sftpStatus').textContent = '✎ 編集中: ' + name + '（ローカルで保存するたび自動でアップロードします）';
-    toast('✎ ' + name + ' をローカルエディタで開きました。保存すると自動で反映されます');
-    if (r.openError) toast('既定アプリで開けませんでした: ' + r.openError, true);
-  } else {
-    $('#sftpStatus').textContent = '編集を開始できません: ' + ((r && r.error) || '不明');
-    toast('編集を開始できません: ' + ((r && r.error) || '不明'), true);
-  }
-}
-function wireSftp() {
-  $('#sftpUp').onclick = sftpUp;
-  $('#sftpRefresh').onclick = sftpRefresh;
-  $('#sftpGo').onclick = () => { const t = tabs.get(activeId); if (t) { t.sftpCwd = $('#sftpPath').value; sftpRefresh(); } };
-  $('#sftpUpload').onclick = async () => { const t = tabs.get(activeId); if (!t) return; const r = await api.sftpUpload(activeId, t.sftpCwd); if (r && r.ok) { $('#sftpStatus').textContent = r.count + ' 件アップロードしました'; sftpRefresh(); } };
-  $('#sftpMkdir').onclick = async () => { const t = tabs.get(activeId); if (!t) return; const nm = await askText('新しいフォルダ名'); if (nm) { const r = await api.sftpMkdir(activeId, t.sftpCwd.replace(/\/$/, '') + '/' + nm); if (r.ok) sftpRefresh(); else $('#sftpStatus').textContent = 'エラー: ' + r.error; } };
-  // エクスプローラからファイルをドラッグ&ドロップしてアップロード
-  const sftpEl = $('#sftp');
-  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
-  sftpEl.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; sftpEl.classList.add('drop-active'); } });
-  sftpEl.addEventListener('dragleave', (e) => { if (e.target === sftpEl) sftpEl.classList.remove('drop-active'); });
-  sftpEl.addEventListener('drop', async (e) => {
-    if (!hasFiles(e)) return;
-    e.preventDefault(); sftpEl.classList.remove('drop-active');
-    const t = tabs.get(activeId); if (!t) { $('#sftpStatus').textContent = '接続中のタブがありません'; return; }
-    if (t.session && t.session.protocol !== 'ssh') { $('#sftpStatus').textContent = 'SFTPはSSH接続でのみ利用できます'; return; }
-    const paths = Array.from(e.dataTransfer.files || []).map((f) => api.getPathForFile(f)).filter(Boolean);
-    if (!paths.length) return;
-    const row = e.target.closest && e.target.closest('tr[data-dir]');
-    const dir = (row && row.dataset.dir) || t.sftpCwd || '.';
-    $('#sftpStatus').textContent = paths.length + ' 件を ' + dir + ' へアップロード中…';
-    const r = await api.sftpUploadPaths(activeId, dir, paths);
-    if (r && r.ok) { $('#sftpStatus').textContent = r.count + ' 件アップロードしました'; sftpRefresh(); }
-    else $('#sftpStatus').textContent = 'アップロード失敗: ' + ((r && r.error) || '不明');
-  });
-}
 
 /* ---------------- スニペット ---------------- */
 function renderSnippets() {
@@ -1388,8 +838,6 @@ function wireUI() {
   $('#btnShell').onclick = () => openLocalShell('powershell');
   $('#btnExport').onclick = exportSessions;
   $('#btnSidebar').onclick = toggleSidebar;
-  $('#btnSftp').onclick = toggleSftp;
-  $('#btnMonitor').onclick = toggleMonitor;
   $('#btnTheme').onclick = toggleTheme;
   // カスタムタイトルバーのウィンドウ操作
   $('#winMin').onclick = () => api.winMinimize();
@@ -1410,29 +858,7 @@ function wireUI() {
   $('#snCancel').onclick = () => $('#snipModal').classList.add('hidden');
   $('#snSave').onclick = saveSnip;
 
-  $('#hlCancel').onclick = () => $('#hlModal').classList.add('hidden');
-  $('#hlSave').onclick = saveHighlight;
 
-  $('#macroCancel').onclick = () => $('#macroModal').classList.add('hidden');
-  $('#macroRun').onclick = runMacroFromModal;
-  $('#macroLang').onchange = updateMacroHelp;
-  $('#macroLoad').onclick = async () => {
-    const r = await api.loadTextFile(['ttl', 'txt', 'inc', 'mac']);
-    if (r && r.ok) { $('#macroScript').value = r.content; if (/\.(ttl|inc|mac)$/i.test(r.name)) $('#macroLang').value = 'ttl'; updateMacroHelp(); toast(r.name + ' を読み込みました'); }
-    else if (r && r.error) toast('読込に失敗: ' + r.error, true);
-  };
-
-  $('#xferCancel').onclick = () => $('#xferModal').classList.add('hidden');
-  $('#xferStart').onclick = startTransferFromModal;
-
-  $('#diagPing').onclick = () => runDiag('ping');
-  $('#diagTracert').onclick = () => runDiag('tracert');
-  $('#diagNslookup').onclick = () => runDiag('nslookup');
-  $('#diagStop').onclick = () => api.diagStop();
-  $('#diagClear').onclick = () => { $('#diagOut').textContent = ''; };
-  $('#diagCopy').onclick = () => { const txt = $('#diagOut').textContent; if (txt) { api.clipboardWrite(txt); toast('診断結果をコピーしました'); } };
-  $('#diagClose').onclick = () => { api.diagStop(); $('#diagModal').classList.add('hidden'); };
-  $('#diagHost').onkeydown = (e) => { if (e.key === 'Enter') runDiag('ping'); };
 
   $('#updNow').onclick = startUpdateDownload;
   $('#updLater').onclick = hideUpdateModal;
@@ -1446,8 +872,9 @@ function wireUI() {
   $('#findClose').onclick = toggleFind;
 
   document.querySelectorAll('.layoutsel .lay').forEach((b) => { b.onclick = () => setLayout(b.dataset.layout); });
-  wireTabTools(); wireSftp(); wireMonitor(); wireLayout();
-  wireServer(); wireScan(); wireConfig(); wirePalette();
+  wireTabTools(); wireLayout();
+  $('#pluginsClose').onclick = () => $('#pluginsModal').classList.add('hidden');
+  $('#pluginRestartBtn').onclick = () => api.appRelaunch();
   window.addEventListener('resize', () => { refitAll(); updateEmbeds(); });
   window.addEventListener('move', updateEmbeds);
 }
@@ -1481,11 +908,10 @@ function wireLayout() {
     const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); SETTINGS.sessListHeight = ul.offsetHeight; saveSettings(); };
     document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
   });
-  // パネルのグリップ（下＝高さ／横＝幅）
+  // パネルのグリップ（下＝高さ／横＝幅）※プラグインのドックパネルも含め汎用に配線
   document.querySelectorAll('.dock-grip').forEach((grip) => grip.addEventListener('pointerdown', (e) => startGripDrag(e, grip.dataset.dock)));
-  // ドック位置切替（下↔横）
-  $('#sftpDockBtn').onclick = () => toggleDockPos('sftp');
-  $('#monDockBtn').onclick = () => toggleDockPos('monitor');
+  // ドック位置切替（下↔横）※ .dockbtn[data-dock] を汎用配線
+  document.querySelectorAll('.dockbtn[data-dock]').forEach((b) => { b.onclick = () => toggleDockPos(b.dataset.dock); });
 }
 function startGripDrag(e, which) {
   e.preventDefault();
@@ -1503,8 +929,8 @@ function startGripDrag(e, which) {
   document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
 }
 function setDockPos(which, pos) {
-  const item = $('#' + which + 'Dock');
-  const btn = $(which === 'sftp' ? '#sftpDockBtn' : '#monDockBtn');
+  const item = $('#' + which + 'Dock'); if (!item) return;
+  const btn = $('#' + which + 'DockBtn');
   if (pos === 'side') {
     item.classList.remove('dock-bottom'); item.classList.add('dock-side');
     item.style.height = ''; item.style.width = (SETTINGS[which + 'W'] || 440) + 'px';
@@ -1526,10 +952,12 @@ function toggleDockPos(which) {
 function applyLayoutSettings() {
   if (SETTINGS.sidebarWidth) $('#sidebar').style.width = SETTINGS.sidebarWidth + 'px';
   if (SETTINGS.sessListHeight) $('#sessList').style.height = Math.min(SETTINGS.sessListHeight, maxSessListHeight()) + 'px';
-  setDockPos('sftp', SETTINGS.sftpDockPos === 'side' ? 'side' : 'bottom');
-  setDockPos('monitor', SETTINGS.monitorDockPos === 'side' ? 'side' : 'bottom');
+  // プラグインが注入したドックパネル（#<which>Dock）を設定に従って配置
+  document.querySelectorAll('.dock-item[id$="Dock"]').forEach((item) => {
+    const which = item.id.replace(/Dock$/, '');
+    setDockPos(which, SETTINGS[which + 'DockPos'] === 'side' ? 'side' : 'bottom');
+  });
 }
-function toggleSftp() { const d = $('#sftpDock'); d.classList.toggle('hidden'); SETTINGS.sftp = !d.classList.contains('hidden'); saveSettings(); if (SETTINGS.sftp) sftpRefresh(); setTimeout(refitActive, 50); }
 function fontInc() { SETTINGS.fontSize = Math.min(28, SETTINGS.fontSize + 1); for (const t of tabs.values()) t.term.options.fontSize = SETTINGS.fontSize; saveSettings(); refitActive(); }
 function fontDec() { SETTINGS.fontSize = Math.max(8, SETTINGS.fontSize - 1); for (const t of tabs.values()) t.term.options.fontSize = SETTINGS.fontSize; saveSettings(); refitActive(); }
 
@@ -1631,13 +1059,8 @@ function runMenuAction(action) {
     case 'find': toggleFind(); break;
     case 'toggle-theme': toggleTheme(); break;
     case 'toggle-sidebar': toggleSidebar(); break;
-    case 'toggle-sftp': toggleSftp(); break;
-    case 'toggle-monitor': toggleMonitor(); break;
     case 'toggle-log-ts': SETTINGS.logTimestamp = !SETTINGS.logTimestamp; saveSettings(); toast('ログのタイムスタンプ: ' + (SETTINGS.logTimestamp ? 'ON（次回ログ開始から）' : 'OFF')); break;
     case 'broadcast': $('#bcastInput').focus(); break;
-    case 'sync-toggle': toggleSync(); break;
-    case 'sync-all-on': syncAll(true); break;
-    case 'sync-all-off': syncAll(false); break;
     case 'export': exportSessions(); break;
     case 'import': importSessions(); break;
     case 'log-start': $('#btnLog').click(); break;
@@ -1650,9 +1073,59 @@ function runMenuAction(action) {
     case 'quit': api.appQuit(); break;
     case 'about': api.appAbout(); break;
     case 'check-update': checkUpdate(); break;
-    case 'highlight': openHighlight(); break;
     case 'toggle-perf': togglePerfMode(); break;
+    case 'plugins': openPluginManager(); break;
+    default: if (window.WT) WT._runMenuAction(action); break;
   }
+}
+// プラグイン管理（有効/無効トグル）
+async function openPluginManager() {
+  const box = $('#pluginList'); if (!box) return;
+  const wasOpen = !$('#pluginsModal').classList.contains('hidden');
+  const openBtn = $('#pluginOpenDirBtn');
+  if (openBtn && api.plugins.openDir) openBtn.onclick = () => api.plugins.openDir();
+  let list = [];
+  try { list = (await api.plugins.list()) || []; } catch (_) { list = []; }
+  // フラグメントに組んでから一括差し替え（監視リフレッシュとの並行呼び出しで倍化しない）
+  const frag = document.createDocumentFragment();
+  if (!list.length) { frag.appendChild(elx('li', 'muted', 'プラグインがありません。')); }
+  for (const p of list) {
+    const li = elx('li', 'plugin-row');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!p.enabled; cb.disabled = !!p.core;
+    cb.onchange = async () => {
+      await api.plugins.setEnabled(p.id, cb.checked);
+      // レンダラ側 SETTINGS も同期（別処理の saveSettings で巻き戻らないように）
+      if (!Array.isArray(SETTINGS.disabledPlugins)) SETTINGS.disabledPlugins = [];
+      const i = SETTINGS.disabledPlugins.indexOf(p.id);
+      if (cb.checked) { if (i >= 0) SETTINGS.disabledPlugins.splice(i, 1); }
+      else if (i < 0) SETTINGS.disabledPlugins.push(p.id);
+      $('#pluginReload').classList.remove('hidden');
+    };
+    const info = elx('div', 'plugin-info');
+    const nameRow = elx('div', 'plugin-name', p.name + (p.core ? '（コア）' : ''));
+    // 組込かユーザー追加かのバッジ（コアは組込のため省略）
+    if (!p.core) {
+      const badge = elx('span', 'plugin-badge ' + (p.builtin ? 'builtin' : 'user'), p.builtin ? '組込' : 'ユーザー');
+      nameRow.appendChild(document.createTextNode(' ')); nameRow.appendChild(badge);
+    }
+    // 単一ファイル(.wtp/.zip)由来なら圧縮バッジ
+    if (p.archived) {
+      const zb = elx('span', 'plugin-badge zip', '📦 ファイル');
+      nameRow.appendChild(document.createTextNode(' ')); nameRow.appendChild(zb);
+    }
+    info.appendChild(nameRow);
+    if (p.description) info.appendChild(elx('div', 'plugin-desc muted', p.description));
+    // チェックボックスをトグルスイッチの見た目で包む（機能はそのまま）
+    const sw = elx('label', 'switch');
+    if (p.core) sw.classList.add('disabled');
+    sw.title = p.core ? 'コアプラグインは無効化できません' : (p.enabled ? '有効（クリックで無効化）' : '無効（クリックで有効化）');
+    sw.appendChild(cb); sw.appendChild(elx('span', 'slider'));
+    li.appendChild(sw); li.appendChild(info);
+    frag.appendChild(li);
+  }
+  box.replaceChildren(frag);
+  if (!wasOpen) $('#pluginReload').classList.add('hidden'); // 新規に開いた時のみ再起動プロンプトを初期化
+  $('#pluginsModal').classList.remove('hidden');
 }
 // 高速描画モードの切替（settings.jsonに保存。HWアクセラ設定は起動時固定のため再起動で反映）
 function togglePerfMode() {
@@ -1738,21 +1211,18 @@ const MENUS = [
     { label: 'ログ保存を停止', a: 'log-stop' },
     { sep: true },
     { label: '全タブへ送信(MultiExec)', a: 'broadcast' },
-    { label: '同時入力：このタブを切替', a: 'sync-toggle' },
-    { label: '同時入力：全タブを追加', a: 'sync-all-on' },
-    { label: '同時入力：全タブを解除', a: 'sync-all-off' },
   ] },
   { label: '表示', items: [
     { label: 'テーマ切替(ダーク/ライト)', a: 'toggle-theme' },
     { label: 'サイドバー表示切替', a: 'toggle-sidebar' },
-    { label: 'SFTPパネル表示切替', a: 'toggle-sftp' },
-    { label: '通信モニタ表示切替', a: 'toggle-monitor' },
-    { label: '出力ハイライト設定…', a: 'highlight' },
     { label: '高速描画モード 切替（GPU/WebGL・要再起動）', a: 'toggle-perf' },
     { label: 'ログにタイムスタンプを付ける(切替)', a: 'toggle-log-ts' },
     { sep: true },
     { label: '開発者ツール', a: 'devtools' },
     { label: '再読み込み', a: 'reload' },
+  ] },
+  { label: 'プラグイン', items: [
+    { label: 'プラグイン管理…', a: 'plugins' },
   ] },
   { label: 'ヘルプ', items: [
     { label: '更新を確認', a: 'check-update' },

@@ -1,0 +1,33 @@
+<!-- コンフィグ管理＆差分（config プラグイン） -->
+<div id="cfgModal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">📑 コンフィグ管理（世代保存＆差分）</div>
+    <div class="modal-body">
+      <div class="row"><label>機器</label>
+        <div class="keyrow" style="flex:1"><select id="cfgKey" style="flex:1"></select><button id="cfgOpenDir" title="保存フォルダを開く">📂</button></div>
+      </div>
+      <div class="row"><label>取得コマンド</label><input id="cfgCmd" type="text" value="show running-config" placeholder="例: show running-config" style="flex:1" /></div>
+      <div class="row"><label>取得オプション</label>
+        <div class="keyrow" style="flex:1;flex-wrap:wrap">
+          <label class="chk" title="Cisco向け：取得前に end で特権EXECへ戻し、terminal length 0 でページ送りを無効化（設定モードからでも取得可）"><input type="checkbox" id="cfgTermLen" checked /> 先に end + terminal length 0（Cisco）</label>
+          <label class="chk" style="white-space:nowrap">無入力 <input id="cfgIdle" type="number" value="1500" min="400" max="20000" style="width:74px" /> ms で確定</label>
+          <button id="cfgCapture" class="primary">⏺ アクティブタブから取得</button>
+          <button id="cfgCaptureSync" title="同時入力グループの全タブから取得">⏺⏺ グループ一括</button>
+        </div>
+      </div>
+      <div class="cfg-cols">
+        <div class="cfg-list-wrap">
+          <div class="muted" style="font-size:11px;margin-bottom:3px">スナップショット（2件選ぶと差分）</div>
+          <ul id="cfgList" class="cfg-list"></ul>
+          <div class="keyrow" style="margin-top:4px;flex-wrap:wrap">
+            <button id="cfgView">表示</button>
+            <button id="cfgDiff" class="primary">差分</button>
+            <button id="cfgDel">削除</button>
+          </div>
+        </div>
+        <pre id="cfgView2" class="cfg-view"></pre>
+      </div>
+    </div>
+    <div class="modal-foot"><button id="cfgClose" class="primary">閉じる</button></div>
+  </div>
+</div>

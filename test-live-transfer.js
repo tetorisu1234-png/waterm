@@ -2,7 +2,7 @@
 // Parrot 実機の lrzsz と WaTerm transfer.js を pty shell 上で相互運用テスト
 const { Client } = require('ssh2');
 const crypto = require('crypto');
-const { startTransfer } = require('./src/transfer');
+const { startTransfer } = require('./src/plugins/transfer/transfer');
 
 const HOST = '192.168.40.117', USER = 'parrot', PASS = 'parrot';
 const md5 = (buf) => crypto.createHash('md5').update(buf).digest('hex');
